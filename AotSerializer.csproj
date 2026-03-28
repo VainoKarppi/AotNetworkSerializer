@@ -18,7 +18,7 @@
     <IsTrimmable>false</IsTrimmable>
     <TrimMode>partial</TrimMode>
 
-    <NoWarn>$(NoWarn);IL3050;IL2026;IL2067;IL2070;IL2057</NoWarn>
+    <NoWarn>$(NoWarn);IL3050;IL2026;IL2067;IL2070;IL2057;IL2075</NoWarn>
   </PropertyGroup>
 
 </Project>

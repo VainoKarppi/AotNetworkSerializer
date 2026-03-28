@@ -9,7 +9,7 @@ using DynTypeNetwork;
 using DynTypeSerializer;
 
 
-
+namespace Program;
 
 public class Person
 {
@@ -24,6 +24,32 @@ public class Person
 
 class Program
 {
+    public class ServerMethods
+    {
+        public static string GetDataFromServer(string testMessage) {
+            Console.WriteLine($"MSG:{testMessage}");
+            return "Hello MSG RESPONSE From SERVER!";
+        }
+        public static string GetData(NetworkMessage message, dynamic testData) {
+            Console.WriteLine($"MSG:{testData} type:({testData.GetType()})");
+            return "SAME TEST";
+        }
+    }
+
+    public class ClientMethods
+    {
+        public string GetDataFromClient(NetworkMessage message, dynamic testData) {
+            Console.WriteLine($"MSG:{testData} type:({testData.GetType()})");
+            return "Hello MSG RESPONSE From CLIENT!";
+        }
+
+        public static string GetData(NetworkMessage message, dynamic testData) {
+            Console.WriteLine($"MSG:{testData} type:({testData.GetType()})");
+            return "SAME TEST";
+        }
+    }
+
+
     public static void OnTcpMessageSent(NetworkMessage message){
         Console.WriteLine($"*EVENT* [CLIENT] OnTcpMessageSent {Serializer.Serialize(message, new Serializer.Options { WriteIndented = true })}");
     }
@@ -32,6 +58,29 @@ class Program
     }
     static async Task Main()
     {
+        MessageBuilder.Methods.RegisterClientMethods( new ClientMethods() );
+        MessageBuilder.Methods.RegisterServerMethods( new ServerMethods() );
+
+        var clientMethods = MessageBuilder.Methods.GetAvailableClientMethods();
+        var serverMethods = MessageBuilder.Methods.GetAvailableServerMethods();
+
+        Console.WriteLine("=== Client Methods ===");
+        foreach (var method in clientMethods)
+        {
+            string parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Type.Name} {p.Name}"));
+            string returnType = method.ReturnType?.Name ?? "void";
+            Console.WriteLine($"{method.Name}({parameters}) : {returnType}");
+        }
+
+        Console.WriteLine("\n=== Server Methods ===");
+        foreach (var method in serverMethods)
+        {
+            string parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Type.Name} {p.Name}"));
+            string returnType = method.ReturnType?.Name ?? "void";
+            Console.WriteLine($"{method.Name}({parameters}) : {returnType}");
+        }
+
+        
         Client.OnTcpMessageSent += OnTcpMessageSent;
         Client.OnTcpMessageReceived += OnTcpMessageReceived;
 
@@ -54,41 +103,48 @@ class Program
             }
         };
 
-        //Server.StartTcp(5000);
-        //int id = await Client.ConnectTcp("127.0.0.1", 5000);
+        Server.StartTcp(5000);
+        int id = await Client.ConnectTcp("127.0.0.1", 5000);
+
+
+        Console.WriteLine($"RECEIVED ID: {id}");
+
+        string? dataFromServer = await Client.RequestTcpDataAsync<string>(1, "GetDataFromServer", "Hello from client! #1");
+        string? dataFromServer2 = await Client.RequestTcpDataAsync(1, () => ServerMethods.GetDataFromServer("Hello from client! #2"));
 
         string data = Serializer.Serialize(person, new Serializer.Options { WriteIndented = true, IncludeRootType = true });
-        Console.WriteLine(data);
 
-        bool hasRootType = Serializer.ContainsRootType(data);
-        if (hasRootType)
-        {
+
+        Type? rootType = Serializer.GetRootType(data);
+        if (rootType != null) {
             Console.WriteLine("Data has RootType");
-            Type rootType = Serializer.GetRootType(data);
             Console.WriteLine($"ROOT TYPE: {rootType} {rootType == typeof(Person)}");
         }
         
 
         // --- Serialize and send over network ---
-        byte[] packet = Network.SendMessage(42, MessageType.Update, person);
+        var msg = new NetworkMessage
+        {
+            SenderId = 2,
+            TargetId = 1,
+            MessageType = MessageType.Update
+        };
+
+
+
+        byte[] packet = MessageBuilder.Pack(msg, person);
 
         // Peek the header without deserializing the payload
-        NetworkMessage header = Network.ReadMessage(packet);
+        NetworkMessage message = MessageBuilder.ReadMessage(packet, includeData: true);
 
-        Console.WriteLine($"SenderId: {header.SenderId}");
-        Console.WriteLine($"TargetId: {header.TargetId}");
-        Console.WriteLine($"MessageType: {header.MessageType}");
-        Console.WriteLine($"MessageId: {header.MessageId}");
-        Console.WriteLine($"Timestamp: {header.Timestamp}");
-        // PayloadBytes is empty, PayloadLength will be 0
 
         // Peek the message type before deserializing
-        MessageType type = Network.ReadMessageType(packet);
+        MessageType type = MessageBuilder.GetMessageType(packet);
         Console.WriteLine($"MessageType in packet: {type}");
 
         if (type == MessageType.Update) {
             // --- Unpack on receiving side ---
-            Person? receivedPerson = Network.Unpack<Person>(packet);
+            Person? receivedPerson = MessageBuilder.Unpack<Person>(message.PayloadBytes);
 
             // --- Inspect received object ---
             if (receivedPerson != null)

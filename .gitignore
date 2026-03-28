@@ -1,0 +1,12 @@
+# Ignore bin and obj folders
+bin/
+obj/
+
+
+**/Logs
+
+*.sln
+*.dll
+*.log
+
+**/hash.txt
