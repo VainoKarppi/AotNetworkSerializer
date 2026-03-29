@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Linq.Expressions;
 using System.Net;
 using System.Net.Sockets;
@@ -16,55 +17,62 @@ namespace DynTypeNetwork;
 
 public static partial class Client
 {
-    private static int _requestId;
-    private static ushort GenerateRequestId() => (ushort)Interlocked.Increment(ref _requestId);
+    public static int TIMEOUT_MS { get; set; } = 500;
 
-    private sealed class TcpRequestPayload
-    {
-        public string? MethodName { get; init; }
-        public MethodInfo? MethodInfo { get; init; }
-        public object?[] Args { get; init; } = [];
-    }
 
     // ── STRING METHOD ──────────────────────────
     public static Task<T?> RequestTcpDataAsync<T>(int targetId, string methodName, params object?[] args) =>
-        RequestTcpDataInternalAsync<TcpRequestPayload, T>(targetId, MessageType.Custom, new TcpRequestPayload { MethodName = methodName, Args = args });
+        RequestTcpDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, new MethodRequest { MethodName = methodName, Args = args });
 
     // EXPRESSION METHOD
     public static Task<T?> RequestTcpDataAsync<T>(int targetId, Expression<Func<T>> methodExpr)
     {
-        if (methodExpr.Body is not MethodCallExpression call)
-            throw new ArgumentException("Expression must be a method call.", nameof(methodExpr));
+        if (methodExpr.Body is not MethodCallExpression call) throw new ArgumentException("Expression must be a method call.", nameof(methodExpr));
+        
+        string methodName = call.Method.Name;
 
         object?[] args = call.Arguments.Select(a => Expression.Lambda(a).Compile().DynamicInvoke()).ToArray();
-        var payload = new TcpRequestPayload { MethodInfo = call.Method, Args = args };
+        var payload = new MethodRequest { MethodName = methodName, Args = args };
 
-        return RequestTcpDataInternalAsync<TcpRequestPayload, T>(targetId, MessageType.Custom, payload);
+        return RequestTcpDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, payload);
     }
 
     // ── INTERNAL GENERIC ───────────────────────
-    private static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload, int timeoutMs = 500)
+    internal static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload)
     {
-        if (_tcpStream == null)
-            throw new InvalidOperationException("TCP not initialized.");
+        if (_tcpStream == null) throw new InvalidOperationException("TCP not initialized.");
 
-        ushort requestId = GenerateRequestId();
+        ushort requestId = MessageBuilder.GenerateRequestId(ref _requestId);
         NetworkMessage msg = new() { SenderId = ClientID, TargetId = targetId, MessageId = requestId, MessageType = type };
 
+        
+        if (type == MessageType.Custom) {
+            // TODO if the target method returns void --> set MessageId = 0
+            // TODO read from:
+
+            if (msg.SenderId != Server.SERVER_ID) {
+                // private static Dictionary<string, RpcMethodInfo> _clientMethodInfos = [];
+                // private static readonly Dictionary<string, Delegate> _clientDelegates = new(StringComparer.OrdinalIgnoreCase);
+            } else {
+                // private static readonly Dictionary<string, Delegate> _serverDelegates = new(StringComparer.OrdinalIgnoreCase);
+                // private static Dictionary<string, RpcMethodInfo> _serverMethodInfos = [];
+            }
+        }
         Requests.Add(requestId);
 
-        var packet = MessageBuilder.Pack(msg, payload);
+        var packet = MessageBuilder.CreateMessage(msg, payload);
         await _tcpStream.WriteAsync(packet);
+        
+        
+        NetworkMessage? returnMessage = await WaitWithTimeout(requestId, TIMEOUT_MS);
+        if (returnMessage == null || returnMessage.Payload == null) return default;
 
-        NetworkMessage? returnMessage = await WaitWithTimeout(requestId, timeoutMs);
-        if (returnMessage == null || returnMessage.PayloadBytes.Length == 0) return default;
-
-        return MessageBuilder.Unpack<TResult>(returnMessage.PayloadBytes);
+        return MessageBuilder.UnpackPayload<TResult>(returnMessage.Payload);
     }
 
     // ── HELPER OVERLOAD FOR SIMPLE CASE ───────
-    private static Task<T?> RequestTcpDataInternalAsync<T>(int targetId, MessageType type, T payload, int timeoutMs = 500) =>
-        RequestTcpDataInternalAsync<T, T>(targetId, type, payload, timeoutMs);
+    private static Task<T?> RequestTcpDataInternalAsync<T>(int targetId, MessageType type, T payload) =>
+        RequestTcpDataInternalAsync<T, T>(targetId, type, payload);
     
 
 

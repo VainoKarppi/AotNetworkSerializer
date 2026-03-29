@@ -29,7 +29,7 @@ public static partial class Client
             MessageType = type
         };
 
-        var packet = MessageBuilder.Pack(msg, data);
+        var packet = MessageBuilder.CreateMessage(msg, data);
 
         if (OnUdpMessageSent != null) {
             if (runAsync)
@@ -57,7 +57,7 @@ public static partial class Client
             MessageType = type
         };
 
-        var packet = MessageBuilder.Pack(msg, data);
+        var packet = MessageBuilder.CreateMessage(msg, data);
 
         if (OnTcpMessageSent != null) {
             if (runAsync)

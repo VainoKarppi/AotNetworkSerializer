@@ -17,11 +17,12 @@ namespace DynTypeNetwork;
 
 public static partial class Client
 {
+    private static int _requestId = 0;
+
     public static readonly List<int> Requests = [];
     public static readonly ConcurrentDictionary<int, NetworkMessage?> Responses = new();
     
     public static int ClientID;
-    internal const int SERVER_ID = 1;
 
     private static TcpClient? _tcpClient;
     private static NetworkStream? _tcpStream;
@@ -29,8 +30,6 @@ public static partial class Client
     private static IPEndPoint? _udpEndpoint;
     private static CancellationTokenSource _cts = new();
     
-
-
     public static bool IsUdpConnected() => _udpClient != null && _udpEndpoint != null;
 
     public static bool IsTcpConnected() => _tcpClient != null && _tcpClient.Connected;
@@ -52,7 +51,7 @@ public static partial class Client
             Hash = string.IsNullOrEmpty(customHash) ? assemblyHash : $"{assemblyHash}-{customHash}"
         };
         
-        HandshakeMessage? response = await RequestTcpDataInternalAsync(SERVER_ID, MessageType.Handshake, handshake);
+        HandshakeMessage? response = await RequestTcpDataInternalAsync(Server.SERVER_ID, MessageType.Handshake, handshake);
         if (response == null) throw new Exception("Handshake failed (Connection lost)");
 
         if (!response.Success) throw new Exception(response.Message ?? "Handshake failed (Unknown reason)");
@@ -65,54 +64,6 @@ public static partial class Client
         return ClientID;
     }
 
-    private static void StartTcpReceiveLoop(NetworkStream stream)
-    {
-        _cts = new CancellationTokenSource();
-        _ = Task.Run(async () =>
-        {
-            var buffer = new byte[8192];
-            try
-            {
-                while (!_cts.Token.IsCancellationRequested)
-                {
-                    int bytesRead = await stream.ReadAsync(buffer, _cts.Token);
-                    if (bytesRead == 0) { // Connection lost
-                        HandleServerShutdown(false);
-                        break;
-                    }
-
-                    byte[] packet = new byte[bytesRead];
-                    Array.Copy(buffer, packet, bytesRead);
-                    NetworkMessage msg = MessageBuilder.ReadMessage(packet, includeData: true);
-
-                    // Check if is response to specific request
-                    if (msg.MessageType == MessageType.Response) {
-                        Responses[msg.MessageId] = msg;
-                        continue;
-                    }
-
-                    if (msg.MessageType == MessageType.Request) {
-                        //TODO CALUCLATE RESPONSE HERE AND SEND RESPONSE (just invoke message reseiced, and let user send result themselves?)
-                        //TODO or invoke requested method, and run automatically specifically that method?
-                        //TODO Send error message if necessary
-                        //TODO build ClientMethods and ServerMethods?
-                        continue;
-                    }
-
-                    if (msg.MessageType == MessageType.ServerShutdown) {
-                        HandleServerShutdown(true);
-                        break;
-                    }
-
-                    OnTcpMessageReceived?.Invoke(msg);
-                }
-            } catch (Exception ex) when (ex is ObjectDisposedException || ex is IOException) {
-                // Connection was forcibly closed
-                HandleServerShutdown(false);
-            }
-        });
-    }
-
     // ── Connect UDP ──────────────────────────
     public static void ConnectUdp(string host, int port)
     {
@@ -121,6 +72,73 @@ public static partial class Client
         _cts = new CancellationTokenSource();
         StartUdpReceiveLoop(_udpClient);
     }
+
+
+    private static void StartTcpReceiveLoop(NetworkStream stream)
+    {
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (!_cts.Token.IsCancellationRequested)
+                {
+                    // Read ONE full message from stream using the proper helper
+                    NetworkMessage? msg = MessageBuilder.ReadStreamMessage(stream);
+                    if (msg == null)
+                    {
+                        // Connection lost or stream closed
+                        HandleServerShutdown(false);
+                        break;
+                    }
+
+                    if (msg.MessageType == MessageType.Response)
+                    {
+                        Responses[msg.MessageId] = msg;
+                        continue;
+                    }
+
+                    if (msg.MessageType == MessageType.Request)
+                    {
+                        // TODO: calculate response or invoke method here
+                        continue;
+                    }
+
+                    if (msg.MessageType == MessageType.ServerShutdown)
+                    {
+                        HandleServerShutdown(true);
+                        break;
+                    }
+
+                    if (msg.MessageType == MessageType.Custom) {
+                        await MessageBuilder.HandleCustomMessage(stream, msg, token);
+                        continue;
+                    }
+
+                    // --- CUSTOM EVENT ---
+                    OnTcpMessageReceived?.Invoke(msg);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // normal shutdown
+            }
+            catch (Exception ex) when (ex is ObjectDisposedException || ex is IOException)
+            {
+                // Connection was forcibly closed
+                HandleServerShutdown(false);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CLIENT] Receive loop exception: {ex}");
+                HandleServerShutdown(false);
+            }
+        });
+    }
+
+
 
     private static void StartUdpReceiveLoop(UdpClient udp)
     {
@@ -151,18 +169,6 @@ public static partial class Client
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
     private static void HandleServerShutdown(bool intentional)
     {
         // Invoke event
@@ -188,9 +194,6 @@ public static partial class Client
         }
         catch {}
     }
-
-
-
 
 
 

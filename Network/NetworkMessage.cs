@@ -1,6 +1,7 @@
 
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -9,7 +10,6 @@ using System.Text.Json.Serialization;
 using DynTypeSerializer;
 
 namespace DynTypeNetwork;
-
 
 
 public class NetworkMessage
@@ -27,7 +27,19 @@ public class NetworkMessage
 
 
     // Internal members: not visible outside the assembly
-    internal byte[] PayloadBytes { get; set; } = [];
+    public string? Payload { get; set; }
+}
+
+public sealed class MethodRequest
+{
+    public string? MethodName { get; init; }
+    public object?[] Args { get; init; } = [];
+}
+
+public sealed class MethodResponse
+{
+    public bool Success { get; set; }
+    public object? Result { get; set; }
 }
 
 public enum MessageType
@@ -50,59 +62,64 @@ public class HandshakeMessage
     public int ClientId { get; set; }
 }
 
-public static partial class MessageBuilder
+public static class MessageBuilder
 {
-    public static byte[] Pack(NetworkMessage msg)
+    internal static ushort GenerateRequestId(ref int requestId)
     {
-        int payloadLength = msg.PayloadBytes?.Length ?? 0;
+        while (true)
+        {
+            int current = requestId;
+            int next = current >= ushort.MaxValue ? 1 : current + 1;
 
+            if (Interlocked.CompareExchange(ref requestId, next, current) == current)
+                return (ushort)next;
+        }
+    }
+
+    public static bool DEBUG { get; set; } = true;
+    public static byte[] CreateMessage(NetworkMessage msg)
+    {
         msg.Timestamp = DateTime.UtcNow.Ticks;
 
+        byte[] payloadBytes = string.IsNullOrEmpty(msg.Payload) ? [] : Encoding.UTF8.GetBytes(msg.Payload);
+
+        int payloadLength = payloadBytes.Length;
+
+        if (DEBUG)
+            Console.WriteLine($"{(msg.SenderId == Server.SERVER_ID ? "[SERVER]" : "[CLIENT]")} (CreateMessage) SenderId:{msg.SenderId}, TargetId:{msg.TargetId}, MessageId:{msg.MessageId}: {msg.Payload}");
+
         var buffer = new List<byte>();
-        buffer.AddRange(BitConverter.GetBytes(msg.SenderId));           // 4 bytes
-        buffer.AddRange(BitConverter.GetBytes(msg.TargetId));           // 4 bytes
-        buffer.AddRange(BitConverter.GetBytes((short)msg.MessageType)); // 2 bytes
-        buffer.AddRange(BitConverter.GetBytes(msg.MessageId));          // 2 bytes
-        buffer.AddRange(BitConverter.GetBytes(msg.Timestamp));          // 8 bytes
-        buffer.AddRange(BitConverter.GetBytes(payloadLength));          // 4 bytes
-        if (payloadLength > 0) buffer.AddRange(msg.PayloadBytes!);      // payload
-        return buffer.ToArray();
+
+        // --- HEADER ---
+        buffer.AddRange(BitConverter.GetBytes(msg.SenderId));            // 4
+        buffer.AddRange(BitConverter.GetBytes(msg.TargetId));            // 4
+        buffer.AddRange(BitConverter.GetBytes((ushort)msg.MessageType)); // 2
+        buffer.AddRange(BitConverter.GetBytes(msg.MessageId));           // 2
+        buffer.AddRange(BitConverter.GetBytes(msg.Timestamp));           // 8
+        buffer.AddRange(BitConverter.GetBytes(payloadLength));           // 4
+
+        // --- PAYLOAD ---
+        if (payloadLength > 0) buffer.AddRange(payloadBytes);
+
+        // --- PREFIX TOTAL LENGTH ---
+        byte[] messageBytes = buffer.ToArray();
+        byte[] lengthPrefix = BitConverter.GetBytes(messageBytes.Length);
+
+        return [.. lengthPrefix, .. messageBytes];
     }
 
-    public static byte[] Pack<T>(NetworkMessage msg, T data)
+    public static byte[] CreateMessage<T>(NetworkMessage msg, T data)
     {
-        msg.PayloadBytes = Encoding.UTF8.GetBytes(Serializer.Serialize(data));
-        return Pack(msg);
+        msg.Payload = Serializer.Serialize(data);
+        return CreateMessage(msg);
     }
 
-    public static T? Unpack<T>(byte[] data)
+    public static T? UnpackPayload<T>(string? data)
     {
-        var json = Encoding.UTF8.GetString(data);
-        if (data.Length == 0) return default;
-        return Serializer.Deserialize<T>(json);
+        if (string.IsNullOrEmpty(data)) return default;
+        return Serializer.Deserialize<T>(data);
     }
 
-    public static void Unpack(byte[] data, out NetworkMessage msg)
-    {
-        int offset = 0;
-
-        int senderId = BitConverter.ToInt32(data, offset); offset += 4;
-        int targetId = BitConverter.ToInt32(data, offset); offset += 4;
-        MessageType messageType = (MessageType)BitConverter.ToInt16(data, offset); offset += 2;
-        ushort messageId = BitConverter.ToUInt16(data, offset); offset += 2;
-        long timestamp = BitConverter.ToInt64(data, offset); offset += 8;
-        int payloadLength = BitConverter.ToInt32(data, offset); offset += 4;
-
-        msg = new NetworkMessage
-        {
-            SenderId = senderId,
-            TargetId = targetId,
-            MessageType = messageType,
-            MessageId = messageId,
-            Timestamp = timestamp,
-            PayloadBytes = payloadLength > 0 ? data[offset..(offset + payloadLength)] : []
-        };
-    }
     public static MessageType GetMessageType(byte[] data)
     {
         if (data.Length < 4 + 4 + 2) // SenderId + TargetId + MessageType
@@ -112,12 +129,12 @@ public static partial class MessageBuilder
         int offset = 4 + 4;
         return (MessageType)BitConverter.ToInt16(data, offset);
     }
+
     public static NetworkMessage ReadMessage(byte[] data, bool includeData = false)
     {
-        // Minimum length: SenderId (4) + TargetId (4) + MessageType (2) + Timestamp (8) + PayloadLength (4)
-        if (data.Length < 4 + 4 + 2 + 8 + 4)
-            throw new ArgumentException("Packet too short to contain a valid header.", nameof(data));
-
+        if (data.Length < 4 + 4 + 2 + 2 + 8 + 4)
+            throw new ArgumentException("Packet too short.", nameof(data));
+        
         int offset = 0;
 
         int senderId = BitConverter.ToInt32(data, offset); offset += 4;
@@ -127,7 +144,16 @@ public static partial class MessageBuilder
         long timestamp = BitConverter.ToInt64(data, offset); offset += 8;
         int payloadLength = BitConverter.ToInt32(data, offset); offset += 4;
 
-        // Return the NetworkMessage with only header info populated
+        string? payload = null;
+
+        if (includeData && payloadLength > 0)
+        {
+            payload = Encoding.UTF8.GetString(data, offset, payloadLength);
+        }
+
+        if (DEBUG)
+            Console.WriteLine($"{(targetId == Server.SERVER_ID ? "[SERVER]" : "[CLIENT]")} (ReadMessage) SenderId:{senderId}, TargetId:{targetId}, MessageId:{messageId}: {payload}");
+
         return new NetworkMessage
         {
             SenderId = senderId,
@@ -135,9 +161,108 @@ public static partial class MessageBuilder
             MessageType = messageType,
             MessageId = messageId,
             Timestamp = timestamp,
-            PayloadBytes = includeData && payloadLength > 0
-                ? data[offset..(offset + payloadLength)]
-                : []
+            Payload = payload
         };
     }
+
+    
+
+    // TODO MOVE TO SHARED (NEW FILE)
+    internal static NetworkMessage? ReadStreamMessage(NetworkStream stream)
+    {
+        try
+        {
+            // --- READ LENGTH PREFIX (4 bytes) ---
+            byte[] lenBuf = new byte[4];
+            stream.ReadExactly(lenBuf);
+            int messageLength = BitConverter.ToInt32(lenBuf);
+
+            // sanity check
+            if (messageLength <= 0 || messageLength > 10_000_000)
+                throw new InvalidDataException($"Invalid message length: {messageLength}");
+
+            // --- READ FULL MESSAGE ---
+            byte[] messageBytes = new byte[messageLength];
+            stream.ReadExactly(messageBytes);
+
+            // --- DESERIALIZE ---
+            NetworkMessage msg = ReadMessage(messageBytes, includeData: true);
+
+            return msg;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[NetworkHelper] ReadMessage exception: {ex}");
+            throw;
+        }
+    }
+
+    
+
+    internal static async Task HandleCustomMessage(NetworkStream stream, NetworkMessage msg, CancellationToken token)
+    {
+        object? result = null;
+        bool success = true;
+        try {
+            MethodRequest? request = UnpackPayload<MethodRequest>(msg.Payload);
+            if (request == null) throw new Exception("Unable to UnpackPayload"); // SHOULD NEVER HAPEN??
+
+            if (msg.TargetId == Server.SERVER_ID) {
+                if (msg.MessageId > 0) {
+                    // Is request (send response back to client)
+                    result = MethodBuilder.CallServerMethod<object>(request.MethodName!, request.Args!);
+                } else {
+                    // Is fire and forget
+                    _ = Task.Run(() => MethodBuilder.CallServerMethod<object>(request.MethodName!, request.Args!), token);
+                }
+            } else {
+                if (msg.MessageId > 0) {
+                    // Is request (send response back to client)
+                    result = MethodBuilder.CallServerMethod<object>(request.MethodName!, request.Args!);
+                } else {
+                    // Is fire and forget
+                    // Already validated on sender (Synced Method lists)
+                    _ = Task.Run(() => MethodBuilder.CallClientMethod<object>(request.MethodName!, request.Args!), token);
+                }
+            }
+
+            if (result == null) throw new Exception("Result was expected, but not returned");
+        } catch (Exception ex) {
+            Console.WriteLine(ex);
+            success = false;
+            result = ex.Message;
+        }
+
+
+        NetworkMessage message = new()
+        {
+            SenderId = msg.TargetId,
+            TargetId = msg.SenderId,
+            MessageId = msg.MessageId,
+            MessageType = MessageType.Response,
+        };
+
+        /*
+        *Dynamically create MethodResponse<T>
+
+        object responseWrapper;
+        Type responseType = result?.GetType() ?? typeof(object);
+        Type wrapperType = typeof(MethodResponse<>).MakeGenericType(responseType);
+        responseWrapper = Activator.CreateInstance(wrapperType)!;
+
+        wrapperType.GetProperty("Success")!.SetValue(responseWrapper, success);
+        wrapperType.GetProperty("Result")!.SetValue(responseWrapper, result);
+        if (!success) wrapperType.GetProperty("ErrorMessage")!.SetValue(responseWrapper, result?.ToString());
+
+        if (DEBUG) Console.WriteLine($"{(msg.SenderId == Server.SERVER_ID ? "[SERVER]" : "[CLIENT]")} Sending response for method: SUCCESS:{success}, ({responseType}):{Serializer.Serialize(result)}");
+
+        byte[] packet = CreateMessage(responseMessage, responseWrapper);
+        await stream.WriteAsync(packet, token);
+        */
+        byte[] packet = CreateMessage(message, result);
+        await stream.WriteAsync(packet, token);
+    }
+
+
+
 }
