@@ -87,10 +87,10 @@ class Program
         string? dataFromServer2 = await Client.RequestTcpDataAsync(Server.SERVER_ID, () => ServerMethods.GetDataFromServer("Hello from client! #2"));
         Console.WriteLine($"\nRETURNED FROM SERVER #2: {dataFromServer2}\n");
 
-        /*
+        
         string? dataFromClient = await Server.RequestTcpDataAsync<string>(2, "GetDataFromClient", "Hello from server! #1");
-        Console.WriteLine($"\nRETURNED FROM CLIENT: {dataFromServer}");
-        */
+        Console.WriteLine($"\nRETURNED FROM CLIENT: {dataFromClient}");
+        
     }
 }
 

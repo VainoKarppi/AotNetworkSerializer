@@ -17,10 +17,7 @@ namespace DynTypeNetwork;
 
 public static partial class Client
 {
-    private static int _requestId = 0;
 
-    public static readonly List<int> Requests = [];
-    public static readonly ConcurrentDictionary<int, NetworkMessage?> Responses = new();
     
     public static int ClientID;
 

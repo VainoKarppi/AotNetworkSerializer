@@ -36,10 +36,10 @@ public sealed class MethodRequest
     public object?[] Args { get; init; } = [];
 }
 
-public sealed class MethodResponse
+public sealed class MethodResponse<T>
 {
     public bool Success { get; set; }
-    public object? Result { get; set; }
+    public T? Result { get; set; }
 }
 
 public enum MessageType
@@ -218,7 +218,7 @@ public static class MessageBuilder
             } else {
                 if (msg.MessageId > 0) {
                     // Is request (send response back to client)
-                    result = MethodBuilder.CallServerMethod<object>(request.MethodName!, request.Args!);
+                    result = MethodBuilder.CallClientMethod<object>(request.MethodName!, request.Args!);
                 } else {
                     // Is fire and forget
                     // Already validated on sender (Synced Method lists)

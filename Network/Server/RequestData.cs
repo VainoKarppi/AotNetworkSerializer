@@ -13,37 +13,13 @@ namespace DynTypeNetwork;
 
 
 
-public class RemoteMethodException(int targetId, string methodName, string message) : Exception(message) {
-    public int TargetId { get; } = targetId;
-    public string MethodName { get; } = methodName;
-}
 
-public static class MethodResponseExtensions {
-    public static T? ThrowIfFailed<T>(this MethodResponse<T> response, int targetId = 0, string? methodName = null)
-    {
-        if (response == null) throw new ArgumentNullException(nameof(response));
-
-        if (!response.Success)
-        {
-            string? error = response.Result as string;
-            if (string.IsNullOrWhiteSpace(error))
-                error = "Remote method failed";
-
-            throw new RemoteMethodException(targetId, methodName ?? "Unknown", error);
-        }
-
-        return response.Result;
-    }
-}
-
-public static partial class Client {
+public static partial class Server {
     public static int TIMEOUT_MS { get; set; } = 500;
-    private static int _requestId = 0;
 
+    private static int _requestId = 0;
     public static readonly List<int> Requests = [];
     public static readonly ConcurrentDictionary<int, NetworkMessage?> Responses = new();
-
-    
 
     // ── STRING METHOD ──────────────────────────
     // TODO Validate for errors: Throw error, or just add event?
@@ -68,17 +44,18 @@ public static partial class Client {
     // ── INTERNAL GENERIC ───────────────────────
     internal static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload)
     {
-        if (_tcpStream == null) throw new InvalidOperationException("TCP not initialized.");
 
         ushort requestId = MessageBuilder.GenerateRequestId(ref _requestId);
-        NetworkMessage msg = new() { SenderId = ClientID, TargetId = targetId, MessageId = requestId, MessageType = type };
+        NetworkMessage msg = new() { SenderId = SERVER_ID, TargetId = targetId, MessageId = requestId, MessageType = type };
 
+        Clients.TryGetValue(targetId, out Connection? client);
+        if (client == null) throw new Exception($"Client not found with this id: {targetId}");
         
         if (type == MessageType.Custom) {
-            // TODO if the target method returns void --> set MessageId = 0
+            // TODO if the target method returns void --> set MessageId = 0 (this sets fire and forget active)
             // TODO read from:
 
-            if (msg.SenderId != Server.SERVER_ID) {
+            if (msg.SenderId != SERVER_ID) {
                 // private static Dictionary<string, RpcMethodInfo> _clientMethodInfos = [];
                 // private static readonly Dictionary<string, Delegate> _clientDelegates = new(StringComparer.OrdinalIgnoreCase);
             } else {
@@ -89,7 +66,7 @@ public static partial class Client {
         Requests.Add(requestId);
 
         var packet = MessageBuilder.CreateMessage(msg, payload);
-        await _tcpStream.WriteAsync(packet);
+        await client.GetStream().WriteAsync(packet);
         
         
         NetworkMessage? returnMessage = await WaitWithTimeout(requestId, TIMEOUT_MS);

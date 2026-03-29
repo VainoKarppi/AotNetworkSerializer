@@ -4,11 +4,10 @@ using System.Net.Sockets;
 
 namespace DynTypeNetwork;
 
-public static class Server
+public static partial class Server
 {
     public const int SERVER_ID = 1;
     private static int _clientIdCounter = 1;
-    private static int _requestId = 0;
 
     public class Connection : TcpClient
     {
@@ -16,6 +15,8 @@ public static class Server
         public bool HandshakeDone { get; set; } = false;
         public Dictionary<string, object?> CustomData { get; set; } = [];
     }
+
+    public readonly static Dictionary<int, Connection> Clients = [];
 
     private static TcpListener? _tcpListener;
     private static UdpClient? _udpListener;
@@ -58,9 +59,14 @@ public static class Server
                     continue;
                 }
 
+                if (msg.MessageType == MessageType.Response) {
+                    Responses[msg.MessageId] = msg;
+                    continue;
+                }
+
                 if (msg.MessageType == MessageType.Custom) {
                     if (msg.TargetId == SERVER_ID) {
-                       MessageBuilder.HandleCustomMessage(client.GetStream(), msg, token); 
+                       await MessageBuilder.HandleCustomMessage(client.GetStream(), msg, token); 
                     } else {
                         _ = Task.Run(() => ForwardMessageToTarget(client.GetStream(), msg), token);
                     }
@@ -78,6 +84,8 @@ public static class Server
         {
             Console.WriteLine($"[SERVER] Client error: {ex}");
         }
+
+        Clients.Remove(client.Id);
     }
 
     
@@ -103,6 +111,8 @@ public static class Server
     // ── Stop server ───────────────────────────
     public static void Stop()
     {
+        Clients.Clear();
+
         _cts?.Cancel();
         _tcpListener?.Stop();
         _udpListener?.Close();
@@ -135,6 +145,8 @@ public static class Server
             Message = "SUCCESS",
             ClientId = client.Id
         };
+
+        Clients.Add(client.Id, client);
 
         await SendResponseMessage(client, message.MessageId, handshake);
     }
