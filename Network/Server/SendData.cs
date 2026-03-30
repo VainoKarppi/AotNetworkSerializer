@@ -14,37 +14,34 @@ namespace DynTypeNetwork;
 
 
 
-public static partial class Client
+public static partial class Server
 {
 
     public static async Task SendUdpMessageAsync(int targetId, string methodName, params object?[] args)
     {
-        if (_udpClient == null || _udpEndpoint == null) throw new InvalidOperationException("UDP client not connected.");
+        if (!IsUdpServerRunning()) throw new InvalidOperationException("UDP server not running.");
+
+        Clients.TryGetValue(targetId, out Connection? client);
+        if (client == null) throw new Exception($"Client not found with this id: {targetId}");
 
         NetworkMessage msg = new()
         {
-            SenderId = ClientID,
+            SenderId = SERVER_ID,
             TargetId = targetId,
             MessageType = MessageType.Custom
         };
 
-        var methods = targetId == Server.SERVER_ID
-            ? MethodBuilder.GetAvailableServerMethods()
-            : MethodBuilder.GetAvailableClientMethods();
-            
+        var methods = MethodBuilder.GetAvailableClientMethods();
         var method = methods.FirstOrDefault(m => m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
 
         if (method == null)
-            throw new InvalidOperationException($"Method '{methodName}' not registered in {(targetId == Server.SERVER_ID ? "server" : "client")} methods.");
+            throw new InvalidOperationException($"Method '{methodName}' not registered in {(targetId == SERVER_ID ? "server" : "client")} methods.");
 
         var payload = new MethodRequest { MethodName = methodName, Args = args };
         var packet = MessageBuilder.CreateMessage(msg, payload);
 
-        if (OnUdpMessageSent != null) {
-            _ = Task.Run(() => OnUdpMessageSent.Invoke(msg));
-        }
 
-        await _udpClient.SendAsync(packet, packet.Length, _udpEndpoint);
+        //await _udpClient.SendAsync(packet, packet.Length, _udpEndpoint);
     }
 
     
@@ -52,31 +49,27 @@ public static partial class Client
 
     // ── Send messages ─────────────────────────
     public static async Task SendTcpMessageAsync(int targetId, string methodName, params object?[] args) {
-        if (_tcpStream == null) throw new InvalidOperationException("TCP not initialized.");
+        if (!IsTcpServerRunning()) throw new InvalidOperationException("TCP not initialized.");
+
+        Clients.TryGetValue(targetId, out Connection? client);
+        if (client == null) throw new Exception($"Client not found with this id: {targetId}");
 
         NetworkMessage msg = new()
         {
-            SenderId = ClientID,
+            SenderId = SERVER_ID,
             TargetId = targetId,
             MessageType = MessageType.Custom
         };
 
-        var methods = targetId == Server.SERVER_ID
-            ? MethodBuilder.GetAvailableServerMethods()
-            : MethodBuilder.GetAvailableClientMethods();
-            
+        var methods = MethodBuilder.GetAvailableClientMethods();
         var method = methods.FirstOrDefault(m => m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
 
         if (method == null)
-            throw new InvalidOperationException($"Method '{methodName}' not registered in {(targetId == Server.SERVER_ID ? "server" : "client")} methods.");
+            throw new InvalidOperationException($"Method '{methodName}' not registered in {(targetId == SERVER_ID ? "server" : "client")} methods.");
 
         var payload = new MethodRequest { MethodName = methodName, Args = args };
         var packet = MessageBuilder.CreateMessage(msg, payload);
 
-        if (OnTcpMessageSent != null) {
-            _ = Task.Run(() => OnTcpMessageSent.Invoke(msg));
-        }
-
-        await _tcpStream.WriteAsync(packet);
+        await client.GetStream().WriteAsync(packet);
     }
 }

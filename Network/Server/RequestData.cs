@@ -28,19 +28,6 @@ public static partial class Server {
     }
         
 
-    // EXPRESSION METHOD
-    public static Task<T?> RequestTcpDataAsync<T>(int targetId, Expression<Func<T>> methodExpr)
-    {
-        if (methodExpr.Body is not MethodCallExpression call) throw new ArgumentException("Expression must be a method call.", nameof(methodExpr));
-        
-        string methodName = call.Method.Name;
-
-        object?[] args = call.Arguments.Select(a => Expression.Lambda(a).Compile().DynamicInvoke()).ToArray();
-        var payload = new MethodRequest { MethodName = methodName, Args = args };
-
-        return RequestTcpDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, payload);
-    }
-
     // ── INTERNAL GENERIC ───────────────────────
     internal static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload)
     {

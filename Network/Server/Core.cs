@@ -45,18 +45,26 @@ public static partial class Server
     {
         while (!token.IsCancellationRequested)
         {
-            var client = new Connection {
-                Client = (await _tcpListener!.AcceptTcpClientAsync(token)).Client
-            };
-            
-            _ = HandleTcpClientAsync(client, token);
+            var tcpClient = await _tcpListener!.AcceptTcpClientAsync(token);
+            var client = new Connection { Client = tcpClient.Client };
+
+            ThreadPool.QueueUserWorkItem(async _ =>
+            {
+                try
+                {
+                    await HandleTcpClientAsync(client, token);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SERVER] Client {client.Id} thread exception: {ex}");
+                }
+            }, null);
         }
     }
 
     private static async Task HandleTcpClientAsync(Connection client, CancellationToken token)
     {
-        Console.WriteLine($"[SERVER] Client connected: {client.Id}");
-        bool clientDisconnectSuccess = true;
+        bool clientDisconnectSuccess = false;
         try
         {
             while (!token.IsCancellationRequested && client.Connected)
@@ -74,11 +82,16 @@ public static partial class Server
                     continue;
                 }
 
+                if (msg.MessageType == MessageType.ClientDisconnected) {
+                    clientDisconnectSuccess = true;
+                    continue;
+                }
+
                 if (msg.MessageType == MessageType.Custom) {
                     if (msg.TargetId == SERVER_ID) {
                        await MessageBuilder.HandleCustomMessage(client.GetStream(), msg, token); 
                     } else {
-                        _ = Task.Run(() => ForwardMessageToTarget(client.GetStream(), msg), token);
+                        await ForwardMessageToTarget(client, msg);
                     }
                     
                     continue;
@@ -89,8 +102,6 @@ public static partial class Server
         }
         catch (Exception)
         {
-            Console.WriteLine($"[SERVER] Client disconnected (failed)");
-            clientDisconnectSuccess = false;
         }
 
         Clients.Remove(client.Id);
@@ -119,8 +130,16 @@ public static partial class Server
     }
 
     // ── Stop server ───────────────────────────
-    public static void Stop()
+    public static async Task StopAsync()
     {
+
+        // Ssend disconnect message to clients, before clearing list and closing connections
+        foreach (Connection? client in Clients.Values) {
+            if (client == null || !client.Connected) continue;
+            
+            await SendMessageAsync(client, client.Id, MessageType.ServerShutdown, null);
+        }
+
         Clients.Clear();
 
         _cts?.Cancel();
@@ -131,7 +150,7 @@ public static partial class Server
     }
 
     public static async Task OnClientDisconnected(Connection client, bool success) {
-        Console.WriteLine($"[SERVER] Client {client.Id} disconnected.");
+        Console.WriteLine($"[SERVER] Client {client.Id} disconnected. Success: {success}");
         Clients.Remove(client.Id);
 
         foreach (var otherClient in Clients.Values) {
@@ -139,21 +158,6 @@ public static partial class Server
         }
     }
 
-
-    // TODO MOVE TO SHARED
-    private static async Task SendResponseMessage<T>(Connection client, ushort messageId, T? data)
-    {
-        NetworkMessage message = new()
-        {
-            SenderId = 1,
-            TargetId = client.Id,
-            MessageId = messageId,
-            MessageType = MessageType.Response
-        };
-        var packet = MessageBuilder.CreateMessage(message, data);
-
-        await client.GetStream().WriteAsync(packet);
-    }
 
     public static async Task SendMessageAsync(Connection client, int targetId, MessageType type, object? data)
     {
@@ -171,7 +175,7 @@ public static partial class Server
 
     private static async Task HandleClientHandshake(Connection client, NetworkMessage message)
     {
-        Console.WriteLine($"[SERVER] Handling handshake from client {client.Id}");
+        
         HandshakeMessage? payload = MessageBuilder.UnpackPayload<HandshakeMessage>(message.Payload);
         if (payload == null) {
             Console.WriteLine($"[SERVER] Invalid handshake from client {client.Id}");
@@ -186,18 +190,6 @@ public static partial class Server
             MethodBuilder.RegisterFromHandshake(payload.AvailableMethods, isServer: true);
         }
 
-        Console.WriteLine("\n=== Client Methods ===");
-        foreach (var method in MethodBuilder.GetAvailableClientMethods())
-        {
-            string parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Type.Name} {p.Name}"));
-            string returnType = method.ReturnType?.Name ?? "void";
-            Console.WriteLine($"{method.Name}({parameters}) : {returnType}");
-        }
-        Console.WriteLine();
-
-
-        Clients.Add(client.Id, client);
-
         HandshakeMessage handshake = new() {
             Success = true,
             Message = "SUCCESS",
@@ -206,9 +198,25 @@ public static partial class Server
             AvailableMethods = MethodBuilder.GetAvailableServerMethods()
         };
 
-        await SendResponseMessage(client, message.MessageId, handshake);
+        // Notify other clients that client was connected
+        foreach (var otherClient in Clients.Values) {
+            await SendMessageAsync(otherClient, otherClient.Id, MessageType.ClientConnected, client.Id);
+        }
 
-        // TODO notify other clients that client was connected
+        Clients.Add(client.Id, client);
+
+        Console.WriteLine($"[SERVER] Client connected: {client.Id}");
+
+        NetworkMessage response = new()
+        {
+            SenderId = SERVER_ID,
+            TargetId = client.Id,
+            MessageId = message.MessageId,
+            MessageType = MessageType.Handshake
+        };
+        var packet2 = MessageBuilder.CreateMessage(response, handshake);
+
+        await client.GetStream().WriteAsync(packet2);
     }
 
 
@@ -216,22 +224,39 @@ public static partial class Server
     /// Placeholder method to forward a message to the correct target.
     /// Implementation should locate the target client by ID and send the message.
     /// </summary>
-    private static void ForwardMessageToTarget(NetworkStream stream, NetworkMessage msg)
+    private static async Task ForwardMessageToTarget(Connection sender, NetworkMessage message)
     {
-        Console.WriteLine($"[NETWORK] Forwarding message {msg.MessageId} from {msg.SenderId} to {msg.TargetId}");
+        Console.WriteLine($"[NETWORK] Forwarding message {message.MessageId} from {message.SenderId} to {message.TargetId}");
 
         // TODO set as a setting
         bool maskSender = false;
-        if (maskSender) msg.SenderId = SERVER_ID;
+        if (maskSender) message.SenderId = SERVER_ID;
 
-
+        Connection? target = Clients[message.TargetId];
+        if (target == null) {
+            // TODO send error response back to sender, if needed
+            return;
+        }
         
+        // Request data from target, and send response back to sender (if MessageId > 0)
+        MethodRequest? request = MessageBuilder.UnpackPayload<MethodRequest>(message.Payload);
+        if (request == null || string.IsNullOrEmpty(request.MethodName)) {
+            // TODO send error response back to sender, if needed
+            return;
+        }
 
-        // Example logic:
-        // 1. Find the client connection by msg.TargetId
-        // 2. Serialize the message
-        // 3. Send over TCP stream
-        // TODO: implement actual forwarding
+        object? result = await RequestTcpDataAsync<object>(target.Id, request.MethodName!, request.Args);
+
+        NetworkMessage response = new()
+        {
+            SenderId = SERVER_ID,
+            TargetId = message.SenderId,
+            MessageId = message.MessageId,
+            MessageType = MessageType.Handshake
+        };
+        var packet = MessageBuilder.CreateMessage(response, result);
+
+        await sender.GetStream().WriteAsync(packet);
     }
 }
 

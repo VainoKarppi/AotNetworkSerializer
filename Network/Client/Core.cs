@@ -41,7 +41,7 @@ public static partial class Client
     public static async Task<int> ConnectTcp(string host, int port, string? customHash = null)
     {
         _tcpClient = new TcpClient();
-        _tcpClient.Connect(host, port);
+        await _tcpClient.ConnectAsync(host, port);
         _tcpStream = _tcpClient.GetStream();
         StartTcpReceiveLoop(_tcpStream);
 
@@ -99,7 +99,7 @@ public static partial class Client
                     if (msg == null)
                     {
                         // Connection lost or stream closed
-                        HandleServerShutdown(false);
+                        await HandleServerShutdown(false);
                         break;
                     }
                     if (msg.MessageType == MessageType.Handshake)
@@ -114,10 +114,14 @@ public static partial class Client
                         continue;
                     }
 
-                    if (msg.MessageType == MessageType.Request)
+                    if (msg.MessageType == MessageType.ClientConnected)
                     {
-                        // TODO: calculate response or invoke method here
-                        continue;
+                        if (msg.Payload == null) continue;
+                        int? newClient = MessageBuilder.UnpackPayload<int>(msg.Payload);
+                        if (newClient == null) continue;
+
+                        Clients.Add(newClient.Value);
+                        break;
                     }
 
                     if (msg.MessageType == MessageType.ClientDisconnected) {
@@ -135,7 +139,7 @@ public static partial class Client
 
                     if (msg.MessageType == MessageType.ServerShutdown)
                     {
-                        HandleServerShutdown(true);
+                        await HandleServerShutdown(true);
                         break;
                     }
 
@@ -155,12 +159,13 @@ public static partial class Client
             catch (Exception ex) when (ex is ObjectDisposedException || ex is IOException)
             {
                 // Connection was forcibly closed
-                HandleServerShutdown(false);
+                Console.WriteLine($"[CLIENT] Connection lost: {ex.Message}");
+                await HandleServerShutdown(false);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[CLIENT] Receive loop exception: {ex}");
-                HandleServerShutdown(false);
+                await HandleServerShutdown(false);
             }
         });
     }
@@ -187,28 +192,47 @@ public static partial class Client
             catch (Exception)
             {
                 // Connection lost or socket closed unexpectedly
-                HandleServerShutdown(false);
+                await HandleServerShutdown(false);
             }
         });
     }
 
 
+    private static async Task SendMessageAsync(int targetId, MessageType type, object? data)
+    {
+        if (!IsTcpConnected()) throw new Exception("Not connected to server");
 
+        NetworkMessage message = new()
+        {
+            SenderId = ClientID,
+            TargetId = targetId,
+            MessageType = type
+        };
+        var packet = MessageBuilder.CreateMessage(message, data);
 
-    private static void HandleServerShutdown(bool intentional)
+        await _tcpClient!.GetStream().WriteAsync(packet);
+    }
+
+    private static async Task HandleServerShutdown(bool intentional)
     {
         // Invoke event
         _ = Task.Run(() => OnServerShutdown?.Invoke(intentional));
 
         // Clean up connections
-        Disconnect();
+        await Disconnect();
     }
 
-    public static void Disconnect()
+    public static async Task Disconnect()
     {
         try
         {
+            await SendMessageAsync(Server.SERVER_ID, MessageType.ClientDisconnected, null);
+
+            ClientID = 0;
+            Clients.Clear();
+
             _cts?.Cancel();
+
             _tcpStream?.Dispose();
             _tcpStream = null;
             _tcpClient?.Close();

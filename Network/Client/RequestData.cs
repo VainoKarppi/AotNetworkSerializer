@@ -41,12 +41,7 @@ public static partial class Client {
 
         var payload = new MethodRequest { MethodName = methodName, Args = args };
 
-        return RequestTcpDataInternalAsync<MethodRequest, T>(
-            targetId,
-            MessageType.Custom,
-            payload,
-            requestId,
-            waitForResponse: !isVoid);
+        return RequestTcpDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, payload, requestId, waitForResponse: !isVoid);
     }
         
 
@@ -67,15 +62,8 @@ public static partial class Client {
     }
 
     // ── INTERNAL GENERIC ───────────────────────
-    internal static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(
-        int targetId,
-        MessageType type,
-        TPayload payload,
-        ushort requestId,
-        bool waitForResponse)
-    {
-        if (_tcpStream == null)
-            throw new InvalidOperationException("TCP not initialized.");
+    internal static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload, ushort requestId, bool waitForResponse) {
+        if (_tcpStream == null) throw new InvalidOperationException("TCP not initialized.");
 
         NetworkMessage msg = new()
         {
@@ -106,12 +94,7 @@ public static partial class Client {
     {
         ushort requestId = MessageBuilder.GenerateRequestId(ref _requestId);
 
-        return RequestTcpDataInternalAsync<T, T>(
-            targetId,
-            type,
-            payload,
-            requestId,
-            waitForResponse: true);
+        return RequestTcpDataInternalAsync<T, T>(targetId, type, payload, requestId, waitForResponse: true);
     }
     
 
