@@ -58,6 +58,9 @@ class Program
         Console.WriteLine($"*EVENT* [CLIENT {Client.ClientID}] OnServerShutdown - Success: {success}");
         Environment.Exit(success ? 0 : 1);
     }
+    public static void OnServerShutdownServer() {
+        Console.WriteLine($"*EVENT* [SERVER] OnServerShutdown");
+    }
 
     static async Task Main(string[] args)
     {
@@ -74,7 +77,7 @@ class Program
         if (!dedicatedMode) PrintAvailableMethods("Client", GetAvailableClientMethods());
         if (serverMode || dedicatedMode) PrintAvailableMethods("Server", GetAvailableServerMethods());
 
-        // ── REGISTER EVENTS ──────────────────────
+        // ── REGISTER CLIENT EVENTS ──────────────────────
         if (!dedicatedMode)
         {
             Client.OnTcpMessageSent += OnTcpMessageSent;
@@ -84,12 +87,15 @@ class Program
         }
 
         if (serverMode || dedicatedMode)
-            Server.MessageReceived += OnTcpMessageReceivedServer;
+        {
+            Server.OnTcpMessageReceived += OnTcpMessageReceivedServer;
+            Server.OnServerShutdown += OnServerShutdownServer;
+        }
 
         // ── START SERVER IF APPLICABLE ──────────
         if (serverMode || dedicatedMode)
         {
-            Server.StartTcp(5000);
+            Server.Start(5000, startUdp: true);
             Console.WriteLine("[SERVER] TCP Server started");
         }
 
@@ -105,7 +111,7 @@ class Program
     #region Client Mode
     private static async Task RunClientMode()
     {
-        int clientId = await Client.ConnectTcp("127.0.0.1", 5000);
+        int clientId = await Client.ConnectAsync("127.0.0.1", 5000, startUdp: true);
         Console.WriteLine($"[CLIENT] Connected with ID: {clientId}");
 
         PrintAvailableMethods("Server", GetAvailableServerMethods());
@@ -113,7 +119,7 @@ class Program
         while (true)
         {
             try {
-                Console.Write("\n[CLIENT] Enter command (send/request/methods/clients/self/exit): ");
+                Console.Write("\n[CLIENT] Enter command (send/request/methods/clients/self/udpstatus/exit): ");
                 string? input = Console.ReadLine();
                 if (string.IsNullOrWhiteSpace(input)) continue;
 
@@ -146,6 +152,10 @@ class Program
 
                     case "request":
                         await HandleClientRequest(parts);
+                        break;
+                    
+                    case "udpstatus":
+                        Console.WriteLine($"[CLIENT] UDP Status: {(Client.IsUdpConnected() ? "Connected" : "Disconnected")}");
                         break;
 
                     default:
@@ -214,7 +224,7 @@ class Program
         while (true)
         {
             try {
-                Console.Write("\n[SERVER] Enter command (send/request/methods/clients/exit): ");
+                Console.Write("\n[SERVER] Enter command (send/request/methods/clients/udpstatus/exit): ");
                 string? input = Console.ReadLine();
                 if (string.IsNullOrWhiteSpace(input)) continue;
 
@@ -234,7 +244,7 @@ class Program
                         break;
 
                     case "clients":
-                        var clients = Server.Clients.Keys.ToList();
+                        var clients = Server.GetClients();
                         Console.WriteLine($"[SERVER] Connected clients: {clients.Count}");
                         foreach (var id in clients) Console.WriteLine($"Client ID: {id}");
                         break;
@@ -245,6 +255,10 @@ class Program
 
                     case "request":
                         await HandleServerRequest(parts);
+                        break;
+                    
+                    case "udpstatus":
+                        Console.WriteLine($"[SERVER] UDP Status: {(Server.IsUdpServerRunning() ? "Connected" : "Disconnected")}");
                         break;
 
                     default:
@@ -274,7 +288,7 @@ class Program
         string methodName = parts[2];
         string argument = string.Join(' ', parts.Skip(3));
 
-        if (!Server.Clients.ContainsKey(targetId))
+        if (!Server.GetClients().Contains(targetId))
         {
             Console.WriteLine("[SERVER] Client not found");
             return;

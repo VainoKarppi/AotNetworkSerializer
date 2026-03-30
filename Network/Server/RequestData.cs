@@ -18,8 +18,8 @@ public static partial class Server {
     public static int TIMEOUT_MS { get; set; } = 500;
 
     private static int _requestId = 0;
-    public static readonly List<int> Requests = [];
-    public static readonly ConcurrentDictionary<int, NetworkMessage?> Responses = new();
+    private static readonly List<int> Requests = [];
+    private static readonly ConcurrentDictionary<int, NetworkMessage?> Responses = new();
 
     // ── STRING METHOD ──────────────────────────
     // TODO Validate for errors: Throw error, or just add event?
@@ -29,7 +29,7 @@ public static partial class Server {
         
 
     // ── INTERNAL GENERIC ───────────────────────
-    internal static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload)
+    private static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload)
     {
 
         ushort requestId = MessageBuilder.GenerateRequestId(ref _requestId);
@@ -62,10 +62,6 @@ public static partial class Server {
         return MessageBuilder.UnpackPayload<TResult>(returnMessage.Payload);
     }
 
-    // ── HELPER OVERLOAD FOR SIMPLE CASE ───────
-    private static Task<T?> RequestTcpDataInternalAsync<T>(int targetId, MessageType type, T payload) =>
-        RequestTcpDataInternalAsync<T, T>(targetId, type, payload);
-    
 
 
     private static async Task<NetworkMessage?> WaitWithTimeout(int requestId, int timeoutMs)

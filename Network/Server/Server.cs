@@ -16,13 +16,19 @@ public static partial class Server
         public bool HandshakeDone { get; set; } = false;
     }
 
-    public readonly static Dictionary<int, Connection> Clients = [];
+    private readonly static Dictionary<int, Connection> Clients = [];
+
+    public static List<int> GetClients() {
+        if (!IsTcpServerRunning()) throw new Exception("Server is not running");
+        // TODO create copy of list to avoid concurrency issues, or return IReadOnlyDictionary?
+        // TODO throw error if not connected to any clients?
+        return Clients.Keys.ToList();
+    }
 
     private static TcpListener? _tcpListener;
     private static UdpClient? _udpListener;
     private static CancellationTokenSource? _cts;
 
-    public static event Action<NetworkMessage>? MessageReceived;
 
     public static bool IsTcpServerRunning() =>
         _tcpListener != null && _tcpListener.Server.IsBound;
@@ -33,7 +39,12 @@ public static partial class Server
     public static bool IsRunning() => IsTcpServerRunning() || IsUdpServerRunning();
 
     // ── Start TCP server ──────────────────────
-    public static void StartTcp(int port)
+    public static void Start(int port, bool startUdp = false)
+    {
+        StartTcp(port);
+        if (startUdp) StartUdp(port);
+    }
+    private static void StartTcp(int port)
     {
         _tcpListener = new TcpListener(IPAddress.Any, port);
         _tcpListener.Start();
@@ -97,7 +108,7 @@ public static partial class Server
                     continue;
                 }
 
-                MessageReceived?.Invoke(msg);
+                OnTcpMessageReceived?.Invoke(msg);
             }
         }
         catch (Exception)
@@ -106,34 +117,72 @@ public static partial class Server
 
         Clients.Remove(client.Id);
 
-        await OnClientDisconnected(client, clientDisconnectSuccess);
+        await ClientDisconnected(client, clientDisconnectSuccess);
     }
 
     
     
     // ── Start UDP server ──────────────────────
-    public static void StartUdp(int port)
+    private static void StartUdp(int port)
     {
         _udpListener = new UdpClient(port);
         _cts = new CancellationTokenSource();
-        _ = ReceiveUdpAsync(_cts.Token);
+        StartUdpServerReceiveLoop(_cts.Token);
     }
 
-    private static async Task ReceiveUdpAsync(CancellationToken token)
+    private static void StartUdpServerReceiveLoop(CancellationToken token)
     {
-        while (!token.IsCancellationRequested)
+        _cts ??= new CancellationTokenSource();
+
+        _ = Task.Run(async () =>
         {
-            var result = await _udpListener!.ReceiveAsync(token);
-            var msg = MessageBuilder.ReadMessage(result.Buffer, includeData: true);
-            MessageReceived?.Invoke(msg);
-        }
+            while (!_cts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    while (!_cts.Token.IsCancellationRequested)
+                    {
+                        var result = await _udpListener!.ReceiveAsync(_cts.Token);
+                        var msg = MessageBuilder.ReadMessage(result.Buffer, includeData: true);
+
+                        // Send event on thread pool to avoid blocking receive loop
+                        _ = Task.Run(() => OnUdpMessageReceived?.Invoke(msg));
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Normal shutdown, exit loop
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SERVER UDP] Receive loop failed: {ex.Message}. Restarting in 1s...");
+
+                    // Small delay before retry
+                    await Task.Delay(1000);
+
+                    // Attempt to continue receiving if listener is still open
+                    if (_udpListener == null || !_udpListener.Client.IsBound)
+                    {
+                        Console.WriteLine("[SERVER UDP] Listener closed, cannot restart UDP receive loop.");
+                        break;
+                    }
+                    else
+                    {
+                        Console.WriteLine("[SERVER UDP] Restarting UDP receive loop...");
+                        continue; // re-enter inner while
+                    }
+                }
+            }
+        }, token);
     }
 
     // ── Stop server ───────────────────────────
     public static async Task StopAsync()
     {
+        OnServerShutdown?.Invoke();
 
-        // Ssend disconnect message to clients, before clearing list and closing connections
+        // Send disconnect message to clients, before clearing list and closing connections
         foreach (Connection? client in Clients.Values) {
             if (client == null || !client.Connected) continue;
             
@@ -149,7 +198,7 @@ public static partial class Server
         _udpListener = null;
     }
 
-    public static async Task OnClientDisconnected(Connection client, bool success) {
+    private static async Task ClientDisconnected(Connection client, bool success) {
         Console.WriteLine($"[SERVER] Client {client.Id} disconnected. Success: {success}");
         Clients.Remove(client.Id);
 
@@ -159,7 +208,7 @@ public static partial class Server
     }
 
 
-    public static async Task SendMessageAsync(Connection client, int targetId, MessageType type, object? data)
+    private static async Task SendMessageAsync(Connection client, int targetId, MessageType type, object? data)
     {
         NetworkMessage message = new()
         {

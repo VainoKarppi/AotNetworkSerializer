@@ -38,7 +38,14 @@ public static partial class Client
     }
 
     // ── Connect TCP ──────────────────────────
-    public static async Task<int> ConnectTcp(string host, int port, string? customHash = null)
+    public static async Task<int> ConnectAsync(string host, int port, bool startUdp = false, string? customHash = null)
+    {
+        int userId = await ConnectTcp(host, port, null);
+        if (startUdp) ConnectUdp(host, port);
+
+        return userId;
+    }
+    private static async Task<int> ConnectTcp(string host, int port, string? customHash = null)
     {
         _tcpClient = new TcpClient();
         await _tcpClient.ConnectAsync(host, port);
@@ -74,7 +81,7 @@ public static partial class Client
     }
 
     // ── Connect UDP ──────────────────────────
-    public static void ConnectUdp(string host, int port)
+    private static void ConnectUdp(string host, int port)
     {
         _udpClient = new UdpClient();
         _udpEndpoint = new IPEndPoint(IPAddress.Parse(host), port);
@@ -121,6 +128,9 @@ public static partial class Client
                         if (newClient == null) continue;
 
                         Clients.Add(newClient.Value);
+
+                        _ = Task.Run(() => OnOtherClientConnected?.Invoke(newClient.Value));
+                        
                         break;
                     }
 
@@ -174,25 +184,47 @@ public static partial class Client
     private static void StartUdpReceiveLoop(UdpClient udp)
     {
         _cts = new CancellationTokenSource();
+
         _ = Task.Run(async () =>
         {
-            try
+            while (!_cts.Token.IsCancellationRequested)
             {
-                while (!_cts.Token.IsCancellationRequested)
+                try
                 {
-                    UdpReceiveResult result = await udp.ReceiveAsync(_cts.Token);
-                    NetworkMessage msg = MessageBuilder.ReadMessage(result.Buffer, includeData: true);
-                    OnUdpMessageReceived?.Invoke(msg);
+                    while (!_cts.Token.IsCancellationRequested)
+                    {
+                        UdpReceiveResult result = await udp.ReceiveAsync(_cts.Token);
+                        NetworkMessage msg = MessageBuilder.ReadMessage(result.Buffer, includeData: true);
+
+                        // Run event on thread pool to avoid blocking receive loop
+                        _ = Task.Run(() => OnUdpMessageReceived?.Invoke(msg));
+                    }
+                } catch (OperationCanceledException) {
+                    break;
+                } catch (Exception ex) {
+                    Console.WriteLine($"[UDP] Receive loop failed: {ex.Message}. Attempting restart in 1s...");
+
+                    // Small delay before restarting
+                    await Task.Delay(1000);
+
+                    // Attempt to restart UDP receive loop
+                    try
+                    {
+                        if (udp.Client != null && udp.Client.Connected)
+                        {
+                            Console.WriteLine("[UDP] Restarting receive loop...");
+                            continue; // re-enter while loop to receive again
+                        }
+                        else
+                        {
+                            Console.WriteLine("[UDP] Socket is closed, cannot restart.");
+                            break;
+                        }
+                    } catch (Exception restartEx) {
+                        Console.WriteLine($"[UDP] Failed to restart: {restartEx.Message}");
+                        break; // give up after failed restart
+                    }
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                // Normal cancellation, do nothing
-            }
-            catch (Exception)
-            {
-                // Connection lost or socket closed unexpectedly
-                await HandleServerShutdown(false);
             }
         });
     }

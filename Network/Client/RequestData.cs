@@ -26,8 +26,8 @@ public static partial class Client {
     public static int TIMEOUT_MS { get; set; } = 500;
     private static int _requestId = 0;
 
-    public static readonly List<int> Requests = [];
-    public static readonly ConcurrentDictionary<int, NetworkMessage?> Responses = new();
+    private static readonly List<int> Requests = [];
+    private static readonly ConcurrentDictionary<int, NetworkMessage?> Responses = new();
 
     
 
@@ -62,7 +62,7 @@ public static partial class Client {
     }
 
     // ── INTERNAL GENERIC ───────────────────────
-    internal static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload, ushort requestId, bool waitForResponse) {
+    private static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload, ushort requestId, bool waitForResponse) {
         if (_tcpStream == null) throw new InvalidOperationException("TCP not initialized.");
 
         NetworkMessage msg = new()

@@ -11,30 +11,21 @@ using DynTypeSerializer;
 namespace DynTypeNetwork;
 
 
-public enum HandshakeFailureReason
-{
-    Unknown,
-    VersionMismatch,
-    InvalidHash,
-    ServerFull,
-    Timeout,
-    RejectedByServer
-}
 
-public static partial class Client
+
+
+
+public static partial class Server
 {
     /// <summary>
     /// True if intentional / false if not
     /// </summary>
-    public static event Action<bool>? OnServerShutdown;
+    public static event Action? OnServerShutdown;
 
     public static event Action<HandshakeFailureReason, string>? OnHandshakeFailed;
 
     public static event Action<HandshakeMessage>? OnClientConnected;
     public static event Action<NetworkMessage>? OnClientDisconnected;
-
-    public static event Action<int>? OnOtherClientConnected;
-    public static event Action<int, bool>? OnOtherClientDisconnected;
 
     public static event Action<NetworkMessage>? OnTcpMessageSent;
     public static event Action<NetworkMessage>? OnTcpMessageReceived;
