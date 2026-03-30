@@ -52,7 +52,7 @@ public static partial class Server {
         if (client == null) throw new Exception($"Client not found with this id: {targetId}");
         
         if (type == MessageType.Custom) {
-            // TODO if the target method returns void --> set MessageId = 0 (this sets fire and forget active)
+            // TODO if the target method returns void --> set MessageId = 0 
             // TODO read from:
 
             if (msg.SenderId != SERVER_ID) {

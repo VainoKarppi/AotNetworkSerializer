@@ -19,8 +19,8 @@ public static class MethodBuilder {
     private static readonly Dictionary<string, Delegate> _serverDelegates = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Delegate> _clientDelegates = new(StringComparer.OrdinalIgnoreCase);
 
-    private static Dictionary<string, RpcMethodInfo> _clientMethodInfos = [];
-    private static Dictionary<string, RpcMethodInfo> _serverMethodInfos = [];
+    private static readonly Dictionary<string, RpcMethodInfo> _clientMethodInfos = [];
+    private static readonly Dictionary<string, RpcMethodInfo> _serverMethodInfos = [];
 
     // Get metadata
     public static RpcMethodInfo[] GetAvailableClientMethods() => _clientMethodInfos.Values.ToArray();
@@ -34,6 +34,59 @@ public static class MethodBuilder {
     // Register all public static methods from a type as server methods
     public static void RegisterServerMethods(object instance) {
         RegisterMethodsFromType(instance.GetType(), isServer: true);
+    }
+
+    internal static int RegisterFromHandshake(RpcMethodInfo[] methods, bool isServer)
+    {
+        int registeredCount = 0;
+
+        foreach (var rpcInfo in methods)
+        {
+            var dictInfos = !isServer ? _serverMethodInfos : _clientMethodInfos;
+            if (dictInfos.ContainsKey(rpcInfo.Name)) continue;
+
+            // Create parameter expressions
+            var paramExprs = rpcInfo.Parameters
+                .Select(p => Expression.Parameter(p.Type, p.Name))
+                .ToArray();
+
+            Type[] parameterTypes = rpcInfo.Parameters.Select(p => p.Type).ToArray();
+
+            Delegate del;
+            Type delegateType;
+
+            if (rpcInfo.ReturnType == null)
+            {
+                delegateType = Expression.GetActionType(parameterTypes);
+
+                var body = Expression.Throw(
+                    Expression.Constant(new InvalidOperationException($"Remote method '{rpcInfo.Name}' cannot be called locally"))
+                );
+
+                del = Expression.Lambda(delegateType, body, paramExprs).Compile();
+            }
+            else
+            {
+                delegateType = Expression.GetFuncType(parameterTypes.Concat([rpcInfo.ReturnType]).ToArray());
+
+                var body = Expression.Throw(
+                    Expression.Constant(new InvalidOperationException($"Remote method '{rpcInfo.Name}' cannot be called locally")),
+                    rpcInfo.ReturnType
+                );
+
+                del = Expression.Lambda(delegateType, body, paramExprs).Compile();
+            }
+
+            if (!isServer)
+                _serverDelegates[rpcInfo.Name] = del;
+            else
+                _clientDelegates[rpcInfo.Name] = del;
+
+            dictInfos[rpcInfo.Name] = rpcInfo;
+            registeredCount++;
+        }
+
+        return registeredCount;
     }
 
     private static void RegisterMethodsFromType(Type type, bool isServer) {
@@ -54,6 +107,7 @@ public static class MethodBuilder {
             var rpcInfo = new RpcMethodInfo {
                 Name = method.Name,
                 Parameters = method.GetParameters()
+                                    .Where(p => p.ParameterType != typeof(NetworkMessage))
                                     .Select(p => new RpcMethodParameter { Name = p.Name!, Type = p.ParameterType })
                                     .ToArray(),
                 ReturnType = method.ReturnType == typeof(void) ? null : method.ReturnType
@@ -69,16 +123,73 @@ public static class MethodBuilder {
         }
     }
 
-    // Call a registered method by name
-    internal static T? CallServerMethod<T>(string methodName, params object[] args) {
-        if (!_serverDelegates.TryGetValue(methodName, out var del))
-            throw new InvalidOperationException($"Server Method {methodName} not registered.");
-        return (T?)del.DynamicInvoke(args);
+    internal static T? CallServerMethod<T>(string methodName, NetworkMessage message, params object[] args) =>
+        CallWithNetworkMessage<T>(_serverDelegates, methodName, message, args);
+
+    internal static T? CallClientMethod<T>(string methodName, NetworkMessage message, params object[] args) =>
+        CallWithNetworkMessage<T>(_clientDelegates, methodName, message, args);
+
+    // Helper for both server and client
+    private static T? CallWithNetworkMessage<T>(Dictionary<string, Delegate> delegates, string methodName, NetworkMessage message, object[] args)
+    {
+        if (!delegates.TryGetValue(methodName, out var del))
+            throw new InvalidOperationException($"{methodName} not registered.");
+        
+        MethodInfo method = del.Method;
+        ParameterInfo[] parameters = method.GetParameters();
+
+        object?[] finalArgs;
+
+        if (FirstParameterIsNetworkMessage(method, out _)) {
+            finalArgs = new object?[parameters.Length];
+
+            // Inject message as first parameter
+            finalArgs[0] = message;
+
+            // Shift args right
+            for (int i = 0; i < args.Length && i + 1 < finalArgs.Length; i++)
+                finalArgs[i + 1] = args[i];
+        } else {
+            finalArgs = args;
+        }
+
+        return (T?)del.DynamicInvoke(finalArgs);
     }
 
-    internal static T? CallClientMethod<T>(string methodName, params object[] args) {
-        if (!_clientDelegates.TryGetValue(methodName, out var del))
-            throw new InvalidOperationException($"Client Method {methodName} not registered.");
-        return (T?)del.DynamicInvoke(args);
+    private static bool FirstParameterIsNetworkMessage(MethodInfo method, out bool isOptional) {
+        ParameterInfo[] parameters = method.GetParameters();
+        isOptional = false;
+        if (parameters.Length == 0) return false;
+
+        ParameterInfo firstParam = parameters[0];
+        Type firstType = Nullable.GetUnderlyingType(firstParam.ParameterType) ?? firstParam.ParameterType;
+
+        if (firstType == typeof(NetworkMessage))
+        {
+            isOptional = firstParam.HasDefaultValue || firstParam.IsOptional;
+            return true;
+        }
+
+        return false;
+    }
+
+    public static string ComputeMethodsHash(RpcMethodInfo[] methods)
+    {
+        // Create a string representation of the method signatures
+        var methodSignatures = methods
+            .OrderBy(m => m.Name) // Ensure consistent order
+            .Select(m =>
+            {
+                string parameters = string.Join(",", m.Parameters.Select(p => $"{p.Type.FullName} {p.Name}"));
+                string returnType = m.ReturnType?.FullName ?? "void";
+                return $"{m.Name}({parameters}):{returnType}";
+            });
+
+        string combined = string.Join("|", methodSignatures);
+
+        // Compute a hash (e.g., SHA256) of the combined string
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        byte[] hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(combined));
+        return Convert.ToBase64String(hashBytes);
     }
 }

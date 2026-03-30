@@ -19,21 +19,7 @@ public class RemoteMethodException(int targetId, string methodName, string messa
 }
 
 public static class MethodResponseExtensions {
-    public static T? ThrowIfFailed<T>(this MethodResponse<T> response, int targetId = 0, string? methodName = null)
-    {
-        if (response == null) throw new ArgumentNullException(nameof(response));
 
-        if (!response.Success)
-        {
-            string? error = response.Result as string;
-            if (string.IsNullOrWhiteSpace(error))
-                error = "Remote method failed";
-
-            throw new RemoteMethodException(targetId, methodName ?? "Unknown", error);
-        }
-
-        return response.Result;
-    }
 }
 
 public static partial class Client {
@@ -47,60 +33,86 @@ public static partial class Client {
 
     // ── STRING METHOD ──────────────────────────
     // TODO Validate for errors: Throw error, or just add event?
-    public static Task<T?> RequestTcpDataAsync<T>(int targetId, string methodName, params object?[] args) {
-        return RequestTcpDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, new MethodRequest { MethodName = methodName, Args = args });
+    public static Task<T?> RequestTcpDataAsync<T>(int targetId, string methodName, params object?[] args)
+    {
+        bool isVoid = IsVoidMethod(targetId, methodName);
+
+        ushort requestId = isVoid ? (ushort)0 : MessageBuilder.GenerateRequestId(ref _requestId);
+
+        var payload = new MethodRequest { MethodName = methodName, Args = args };
+
+        return RequestTcpDataInternalAsync<MethodRequest, T>(
+            targetId,
+            MessageType.Custom,
+            payload,
+            requestId,
+            waitForResponse: !isVoid);
     }
         
 
-    // EXPRESSION METHOD
-    public static Task<T?> RequestTcpDataAsync<T>(int targetId, Expression<Func<T>> methodExpr)
+
+    private static bool IsVoidMethod(int targetId, string methodName)
     {
-        if (methodExpr.Body is not MethodCallExpression call) throw new ArgumentException("Expression must be a method call.", nameof(methodExpr));
-        
-        string methodName = call.Method.Name;
+        var methods = targetId == Server.SERVER_ID
+            ? MethodBuilder.GetAvailableServerMethods()
+            : MethodBuilder.GetAvailableClientMethods();
 
-        object?[] args = call.Arguments.Select(a => Expression.Lambda(a).Compile().DynamicInvoke()).ToArray();
-        var payload = new MethodRequest { MethodName = methodName, Args = args };
+        var method = methods.FirstOrDefault(m =>
+            m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
 
-        return RequestTcpDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, payload);
+        if (method == null)
+            throw new InvalidOperationException($"Method '{methodName}' not registered in {(targetId == Server.SERVER_ID ? "server" : "client")} methods.");
+
+        return method.ReturnType == typeof(void);
     }
 
     // ── INTERNAL GENERIC ───────────────────────
-    internal static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload)
+    internal static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(
+        int targetId,
+        MessageType type,
+        TPayload payload,
+        ushort requestId,
+        bool waitForResponse)
     {
-        if (_tcpStream == null) throw new InvalidOperationException("TCP not initialized.");
+        if (_tcpStream == null)
+            throw new InvalidOperationException("TCP not initialized.");
 
-        ushort requestId = MessageBuilder.GenerateRequestId(ref _requestId);
-        NetworkMessage msg = new() { SenderId = ClientID, TargetId = targetId, MessageId = requestId, MessageType = type };
+        NetworkMessage msg = new()
+        {
+            SenderId = ClientID,
+            TargetId = targetId,
+            MessageId = requestId,
+            MessageType = type
+        };
 
-        
-        if (type == MessageType.Custom) {
-            // TODO if the target method returns void --> set MessageId = 0
-            // TODO read from:
+        if (waitForResponse)
+            Requests.Add(requestId);
 
-            if (msg.SenderId != Server.SERVER_ID) {
-                // private static Dictionary<string, RpcMethodInfo> _clientMethodInfos = [];
-                // private static readonly Dictionary<string, Delegate> _clientDelegates = new(StringComparer.OrdinalIgnoreCase);
-            } else {
-                // private static readonly Dictionary<string, Delegate> _serverDelegates = new(StringComparer.OrdinalIgnoreCase);
-                // private static Dictionary<string, RpcMethodInfo> _serverMethodInfos = [];
-            }
-        }
-        Requests.Add(requestId);
-
-        var packet = MessageBuilder.CreateMessage(msg, payload);
+        byte[] packet = MessageBuilder.CreateMessage(msg, payload);
         await _tcpStream.WriteAsync(packet);
-        
-        
+
+        if (!waitForResponse)
+            return default;
+
         NetworkMessage? returnMessage = await WaitWithTimeout(requestId, TIMEOUT_MS);
-        if (returnMessage == null || returnMessage.Payload == null) return default;
+        if (returnMessage?.Payload == null)
+            return default;
 
         return MessageBuilder.UnpackPayload<TResult>(returnMessage.Payload);
     }
 
     // ── HELPER OVERLOAD FOR SIMPLE CASE ───────
-    private static Task<T?> RequestTcpDataInternalAsync<T>(int targetId, MessageType type, T payload) =>
-        RequestTcpDataInternalAsync<T, T>(targetId, type, payload);
+    internal static Task<T?> RequestTcpDataInternalAsync<T>(int targetId, MessageType type, T payload)
+    {
+        ushort requestId = MessageBuilder.GenerateRequestId(ref _requestId);
+
+        return RequestTcpDataInternalAsync<T, T>(
+            targetId,
+            type,
+            payload,
+            requestId,
+            waitForResponse: true);
+    }
     
 
 

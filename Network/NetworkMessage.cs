@@ -60,6 +60,8 @@ public class HandshakeMessage
     public string? Message { get; set; }
     public string Hash { get; set; } = "";
     public int ClientId { get; set; }
+    public List<int> OtherConnectedClients { get; set; } = [];
+    public MethodBuilder.RpcMethodInfo[] AvailableMethods { get; set; } = [];
 }
 
 public static class MessageBuilder
@@ -168,39 +170,31 @@ public static class MessageBuilder
     
 
     // TODO MOVE TO SHARED (NEW FILE)
-    internal static NetworkMessage? ReadStreamMessage(NetworkStream stream)
-    {
-        try
-        {
-            // --- READ LENGTH PREFIX (4 bytes) ---
-            byte[] lenBuf = new byte[4];
-            stream.ReadExactly(lenBuf);
-            int messageLength = BitConverter.ToInt32(lenBuf);
+    internal static NetworkMessage? ReadStreamMessage(NetworkStream stream) {
+        // --- READ LENGTH PREFIX (4 bytes) ---
+        byte[] lenBuf = new byte[4];
+        stream.ReadExactly(lenBuf);
+        int messageLength = BitConverter.ToInt32(lenBuf);
 
-            // sanity check
-            if (messageLength <= 0 || messageLength > 10_000_000)
-                throw new InvalidDataException($"Invalid message length: {messageLength}");
+        // sanity check
+        if (messageLength <= 0 || messageLength > 10_000_000)
+            throw new InvalidDataException($"Invalid message length: {messageLength}");
 
-            // --- READ FULL MESSAGE ---
-            byte[] messageBytes = new byte[messageLength];
-            stream.ReadExactly(messageBytes);
+        // --- READ FULL MESSAGE ---
+        byte[] messageBytes = new byte[messageLength];
+        stream.ReadExactly(messageBytes);
 
-            // --- DESERIALIZE ---
-            NetworkMessage msg = ReadMessage(messageBytes, includeData: true);
+        // --- DESERIALIZE ---
+        NetworkMessage msg = ReadMessage(messageBytes, includeData: true);
 
-            return msg;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[NetworkHelper] ReadMessage exception: {ex}");
-            throw;
-        }
+        return msg;
     }
 
     
 
     internal static async Task HandleCustomMessage(NetworkStream stream, NetworkMessage msg, CancellationToken token)
     {
+        // TODO handle errors. (Also dont waitForReturn on sender, if target method in opposite end is void, and returns nothing)
         object? result = null;
         bool success = true;
         try {
@@ -210,19 +204,21 @@ public static class MessageBuilder
             if (msg.TargetId == Server.SERVER_ID) {
                 if (msg.MessageId > 0) {
                     // Is request (send response back to client)
-                    result = MethodBuilder.CallServerMethod<object>(request.MethodName!, request.Args!);
+                    result = MethodBuilder.CallServerMethod<object>(request.MethodName!, msg, request.Args!);
                 } else {
                     // Is fire and forget
-                    _ = Task.Run(() => MethodBuilder.CallServerMethod<object>(request.MethodName!, request.Args!), token);
+                    _ = Task.Run(() => MethodBuilder.CallServerMethod<object>(request.MethodName!, msg, request.Args!), token);
+                    return; // Dont send response
                 }
             } else {
                 if (msg.MessageId > 0) {
                     // Is request (send response back to client)
-                    result = MethodBuilder.CallClientMethod<object>(request.MethodName!, request.Args!);
+                    result = MethodBuilder.CallClientMethod<object>(request.MethodName!, msg, request.Args!);
                 } else {
                     // Is fire and forget
                     // Already validated on sender (Synced Method lists)
-                    _ = Task.Run(() => MethodBuilder.CallClientMethod<object>(request.MethodName!, request.Args!), token);
+                    _ = Task.Run(() => MethodBuilder.CallClientMethod<object>(request.MethodName!, msg, request.Args!), token);
+                    return; // Dont send response
                 }
             }
 
@@ -230,11 +226,11 @@ public static class MessageBuilder
         } catch (Exception ex) {
             Console.WriteLine(ex);
             success = false;
-            result = ex.Message;
+            //result = ex.Message;
         }
 
 
-        NetworkMessage message = new()
+        NetworkMessage responseMessage = new()
         {
             SenderId = msg.TargetId,
             TargetId = msg.SenderId,
@@ -242,9 +238,10 @@ public static class MessageBuilder
             MessageType = MessageType.Response,
         };
 
-        /*
-        *Dynamically create MethodResponse<T>
+        
+        // *Dynamically create MethodResponse<T>
 
+        /*
         object responseWrapper;
         Type responseType = result?.GetType() ?? typeof(object);
         Type wrapperType = typeof(MethodResponse<>).MakeGenericType(responseType);
@@ -259,7 +256,10 @@ public static class MessageBuilder
         byte[] packet = CreateMessage(responseMessage, responseWrapper);
         await stream.WriteAsync(packet, token);
         */
-        byte[] packet = CreateMessage(message, result);
+
+        if (DEBUG) Console.WriteLine($"{(msg.SenderId == Server.SERVER_ID ? "[SERVER]" : "[CLIENT]")} Sending response for method: SUCCESS:{success}, ({(result == null ? "null" : result.GetType().Name)}):{Serializer.Serialize(result)}");
+        
+        byte[] packet = CreateMessage(responseMessage, result);
         await stream.WriteAsync(packet, token);
     }
 

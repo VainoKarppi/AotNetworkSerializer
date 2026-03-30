@@ -18,7 +18,7 @@ namespace DynTypeNetwork;
 public static partial class Client
 {
 
-    
+    private readonly static List<int> Clients = [];
     public static int ClientID;
 
     private static TcpClient? _tcpClient;
@@ -31,7 +31,11 @@ public static partial class Client
 
     public static bool IsTcpConnected() => _tcpClient != null && _tcpClient.Connected;
 
-    
+    public static List<int> GetOtherClients() {
+        if (!IsTcpConnected()) throw new  Exception("Not connected to server");
+
+        return Clients;
+    }
 
     // ── Connect TCP ──────────────────────────
     public static async Task<int> ConnectTcp(string host, int port, string? customHash = null)
@@ -44,9 +48,14 @@ public static partial class Client
         string assemblyHash = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "";
 
         // Combine with customHash if provided
+        var availableMethods = MethodBuilder.GetAvailableClientMethods();
+        string methodsHash = MethodBuilder.ComputeMethodsHash(availableMethods);
+
         HandshakeMessage handshake = new() {
-            Hash = string.IsNullOrEmpty(customHash) ? assemblyHash : $"{assemblyHash}-{customHash}"
+            Hash = $"{assemblyHash}-{methodsHash}-{customHash ?? ""}",
+            AvailableMethods = availableMethods
         };
+        
         
         HandshakeMessage? response = await RequestTcpDataInternalAsync(Server.SERVER_ID, MessageType.Handshake, handshake);
         if (response == null) throw new Exception("Handshake failed (Connection lost)");
@@ -54,6 +63,9 @@ public static partial class Client
         if (!response.Success) throw new Exception(response.Message ?? "Handshake failed (Unknown reason)");
         
         ClientID = response.ClientId;
+        Clients.AddRange(response.OtherConnectedClients);
+
+        int count = MethodBuilder.RegisterFromHandshake(response.AvailableMethods, isServer: false);
 
         // Allow API user to request custom data from server, before connect success (eg. other clients etc)
         OnClientConnected?.Invoke(response);
@@ -90,6 +102,11 @@ public static partial class Client
                         HandleServerShutdown(false);
                         break;
                     }
+                    if (msg.MessageType == MessageType.Handshake)
+                    {
+                        Responses[msg.MessageId] = msg;
+                        continue;
+                    }
 
                     if (msg.MessageType == MessageType.Response)
                     {
@@ -100,6 +117,19 @@ public static partial class Client
                     if (msg.MessageType == MessageType.Request)
                     {
                         // TODO: calculate response or invoke method here
+                        continue;
+                    }
+
+                    if (msg.MessageType == MessageType.ClientDisconnected) {
+                        object[]? data = MessageBuilder.UnpackPayload<object[]>(msg.Payload);
+                        if (data == null || data.Length != 2) continue;
+
+                        int client_id = (int)data[0];
+                        bool success = (bool)data[1];
+                        
+                        Clients.Remove(client_id);
+                        _ = Task.Run(() => OnOtherClientDisconnected?.Invoke(client_id, success));
+
                         continue;
                     }
 
@@ -134,7 +164,6 @@ public static partial class Client
             }
         });
     }
-
 
 
     private static void StartUdpReceiveLoop(UdpClient udp)

@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using DynTypeSerializer;
 
 namespace DynTypeNetwork;
 
@@ -13,7 +14,6 @@ public static partial class Server
     {
         public int Id { get; set; } = Interlocked.Increment(ref _clientIdCounter);
         public bool HandshakeDone { get; set; } = false;
-        public Dictionary<string, object?> CustomData { get; set; } = [];
     }
 
     public readonly static Dictionary<int, Connection> Clients = [];
@@ -23,6 +23,14 @@ public static partial class Server
     private static CancellationTokenSource? _cts;
 
     public static event Action<NetworkMessage>? MessageReceived;
+
+    public static bool IsTcpServerRunning() =>
+        _tcpListener != null && _tcpListener.Server.IsBound;
+
+    public static bool IsUdpServerRunning() =>
+        _udpListener != null && _udpListener.Client.IsBound;
+    
+    public static bool IsRunning() => IsTcpServerRunning() || IsUdpServerRunning();
 
     // ── Start TCP server ──────────────────────
     public static void StartTcp(int port)
@@ -47,6 +55,8 @@ public static partial class Server
 
     private static async Task HandleTcpClientAsync(Connection client, CancellationToken token)
     {
+        Console.WriteLine($"[SERVER] Client connected: {client.Id}");
+        bool clientDisconnectSuccess = true;
         try
         {
             while (!token.IsCancellationRequested && client.Connected)
@@ -77,15 +87,15 @@ public static partial class Server
                 MessageReceived?.Invoke(msg);
             }
         }
-        catch (OperationCanceledException) {
-            Console.WriteLine($"[SERVER] Client disconnected (success)");
-        }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Console.WriteLine($"[SERVER] Client error: {ex}");
+            Console.WriteLine($"[SERVER] Client disconnected (failed)");
+            clientDisconnectSuccess = false;
         }
 
         Clients.Remove(client.Id);
+
+        await OnClientDisconnected(client, clientDisconnectSuccess);
     }
 
     
@@ -120,6 +130,15 @@ public static partial class Server
         _udpListener = null;
     }
 
+    public static async Task OnClientDisconnected(Connection client, bool success) {
+        Console.WriteLine($"[SERVER] Client {client.Id} disconnected.");
+        Clients.Remove(client.Id);
+
+        foreach (var otherClient in Clients.Values) {
+            await SendMessageAsync(otherClient, otherClient.Id, MessageType.ClientDisconnected, new object[] { client.Id, success });
+        }
+    }
+
 
     // TODO MOVE TO SHARED
     private static async Task SendResponseMessage<T>(Connection client, ushort messageId, T? data)
@@ -136,19 +155,60 @@ public static partial class Server
         await client.GetStream().WriteAsync(packet);
     }
 
+    public static async Task SendMessageAsync(Connection client, int targetId, MessageType type, object? data)
+    {
+        NetworkMessage message = new()
+        {
+            SenderId = 1,
+            TargetId = targetId,
+            MessageType = type
+        };
+        var packet = MessageBuilder.CreateMessage(message, data);
+
+        await client.GetStream().WriteAsync(packet);
+    }
+
 
     private static async Task HandleClientHandshake(Connection client, NetworkMessage message)
     {
-        // TODO valida hash etc, and calulate real client id.
-        HandshakeMessage handshake = new() {
-            Success = true,
-            Message = "SUCCESS",
-            ClientId = client.Id
-        };
+        Console.WriteLine($"[SERVER] Handling handshake from client {client.Id}");
+        HandshakeMessage? payload = MessageBuilder.UnpackPayload<HandshakeMessage>(message.Payload);
+        if (payload == null) {
+            Console.WriteLine($"[SERVER] Invalid handshake from client {client.Id}");
+            client.Close();
+            return;
+        }
+
+        // TODO validate hash etc
+
+        // Register client methods from handshake, if not already registered (eg. from previous client handshakes)
+        if (MethodBuilder.GetAvailableClientMethods().Length == 0) {
+            MethodBuilder.RegisterFromHandshake(payload.AvailableMethods, isServer: true);
+        }
+
+        Console.WriteLine("\n=== Client Methods ===");
+        foreach (var method in MethodBuilder.GetAvailableClientMethods())
+        {
+            string parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Type.Name} {p.Name}"));
+            string returnType = method.ReturnType?.Name ?? "void";
+            Console.WriteLine($"{method.Name}({parameters}) : {returnType}");
+        }
+        Console.WriteLine();
+
 
         Clients.Add(client.Id, client);
 
+        HandshakeMessage handshake = new() {
+            Success = true,
+            Message = "SUCCESS",
+            ClientId = client.Id,
+            OtherConnectedClients = Clients.Keys.Where(id => id != client.Id).ToList(),
+            AvailableMethods = MethodBuilder.GetAvailableServerMethods()
+        };
+
         await SendResponseMessage(client, message.MessageId, handshake);
+
+        // TODO notify other clients that client was connected
     }
 
 

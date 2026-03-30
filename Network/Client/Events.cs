@@ -24,7 +24,7 @@ public static partial class Client
     public static event Action<HandshakeMessage>? OnClientConnected;
     public static event Action<NetworkMessage>? OnClientDisconnected;
     public static event Action<NetworkMessage>? OnOtherClientConnected;
-    public static event Action<NetworkMessage>? OnOtherClientDisconnected;
+    public static event Action<int, bool>? OnOtherClientDisconnected;
 
     public static event Action<NetworkMessage>? OnTcpMessageSent;
     public static event Action<NetworkMessage>? OnTcpMessageReceived;
