@@ -21,13 +21,6 @@ public static partial class Client
     {
         if (_udpClient == null || _udpEndpoint == null) throw new InvalidOperationException("UDP client not connected.");
 
-        NetworkMessage msg = new()
-        {
-            SenderId = ClientID,
-            TargetId = targetId,
-            MessageType = MessageType.Custom
-        };
-
         var methods = targetId == Server.SERVER_ID
             ? MethodBuilder.GetAvailableServerMethods()
             : MethodBuilder.GetAvailableClientMethods();
@@ -38,7 +31,14 @@ public static partial class Client
             throw new InvalidOperationException($"Method '{methodName}' not registered in {(targetId == Server.SERVER_ID ? "server" : "client")} methods.");
 
         var payload = new MethodRequest { MethodName = methodName, Args = args };
-        msg.Payload = Serializer.Serialize(payload);
+
+        NetworkMessage msg = new()
+        {
+            SenderId = ClientID,
+            TargetId = targetId,
+            MessageType = MessageType.Custom,
+            Payload = Serializer.Serialize(payload)
+        };
 
         var packet = MessageBuilder.CreateUdpMessage(msg);
 

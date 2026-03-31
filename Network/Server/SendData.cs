@@ -30,13 +30,6 @@ public static partial class Server
         if (client.UdpEndpoint == null)
             throw new InvalidOperationException($"Client {targetId} has no registered UDP endpoint. Make sure they sent a UdpRegister message.");
 
-        // Prepare network message
-        NetworkMessage msg = new()
-        {
-            SenderId = SERVER_ID,
-            TargetId = targetId,
-            MessageType = MessageType.Custom
-        };
 
         // Validate method exists
         var methods = MethodBuilder.GetAvailableClientMethods();
@@ -46,7 +39,16 @@ public static partial class Server
 
         // Pack payload
         var payload = new MethodRequest { MethodName = methodName, Args = args };
-        byte[] packet = MessageBuilder.CreateMessage(msg, payload);
+
+        NetworkMessage msg = new()
+        {
+            SenderId = targetId,
+            TargetId = targetId,
+            MessageType = MessageType.Custom,
+            Payload = Serializer.Serialize(payload)
+        };
+
+        var packet = MessageBuilder.CreateUdpMessage(msg);
 
         try
         {

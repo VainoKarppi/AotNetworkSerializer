@@ -117,7 +117,7 @@ class Program
         while (true)
         {
             try {
-                Console.Write("\n[CLIENT] Enter command (send/request/methods/clients/self/udpstatus/exit): ");
+                Console.Write("\n[CLIENT] Enter command (send/request/methods/clients/self/udpstatus/sendudp/exit): ");
                 string? input = Console.ReadLine();
                 if (string.IsNullOrWhiteSpace(input)) continue;
 
@@ -146,11 +146,11 @@ class Program
                         break;
 
                     case "send":
-                        await HandleClientSend(parts);
+                        await HandleClientSend(parts, isTcp: true);
                         break;
                     
                     case "sendudp":
-                        await Client.SendUdpMessageAsync(Server.SERVER_ID, "GetDataFromServer", "Hello via UDP!");
+                        await HandleClientSend(parts, isTcp: false);
                         break;
 
                     case "request":
@@ -171,7 +171,7 @@ class Program
         }
     }
 
-    private static async Task HandleClientSend(string[] parts)
+    private static async Task HandleClientSend(string[] parts, bool isTcp = true)
     {
         if (parts.Length < 4)
         {
@@ -188,7 +188,10 @@ class Program
         string methodName = parts[2];
         string argument = string.Join(' ', parts.Skip(3));
 
-        await Client.SendTcpMessageAsync(targetId, methodName, argument);
+        await (isTcp
+            ? Client.SendTcpMessageAsync(targetId, methodName, argument)
+            : Client.SendUdpMessageAsync(targetId, methodName, argument));
+
         Console.WriteLine($"[CLIENT] Message sent to {targetId}");
     }
 
@@ -227,7 +230,7 @@ class Program
         while (true)
         {
             try {
-                Console.Write("\n[SERVER] Enter command (send/request/methods/clients/udpstatus/exit): ");
+                Console.Write("\n[SERVER] Enter command (send/request/methods/clients/udpstatus/sendudp/exit): ");
                 string? input = Console.ReadLine();
                 if (string.IsNullOrWhiteSpace(input)) continue;
 
@@ -253,7 +256,11 @@ class Program
                         break;
 
                     case "send":
-                        await HandleServerSend(parts);
+                        await HandleServerSend(parts, isTcp: true);
+                        break;
+                    
+                    case "sendudp":
+                        await HandleServerSend(parts, isTcp: false);
                         break;
 
                     case "request":
@@ -274,7 +281,7 @@ class Program
         }
     }
 
-    private static async Task HandleServerSend(string[] parts)
+    private static async Task HandleServerSend(string[] parts, bool isTcp = true)
     {
         if (parts.Length < 4)
         {
@@ -297,7 +304,10 @@ class Program
             return;
         }
 
-        await Server.SendTcpMessageAsync(targetId, methodName, argument);
+        await (isTcp
+            ? Server.SendTcpMessageAsync(targetId, methodName, argument)
+            : Server.SendUdpMessageAsync(targetId, methodName, argument));
+        
         Console.WriteLine($"[SERVER] Message sent to client {targetId}");
     }
 

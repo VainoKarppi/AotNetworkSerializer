@@ -190,52 +190,82 @@ public static partial class Client
     }
 
 
-    private static void StartUdpReceiveLoop(UdpClient udp)
+
+    private static void StartUdpReceiveLoop(UdpClient client)
     {
-        _cts = new CancellationTokenSource();
+        _cts ??= new CancellationTokenSource();
 
-        _ = Task.Run(async () =>
+        _ = Task.Run(() => ReceiveLoop(client, _cts.Token), _cts.Token);
+    }
+
+    private static async Task ReceiveLoop(UdpClient client, CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
         {
-            while (!_cts.Token.IsCancellationRequested)
+            try
             {
-                try
+                while (!token.IsCancellationRequested)
                 {
-                    while (!_cts.Token.IsCancellationRequested)
-                    {
-                        UdpReceiveResult result = await udp.ReceiveAsync(_cts.Token);
-                        NetworkMessage msg = MessageBuilder.ReadUdpMessage(result.Buffer, includeData: true);
+                    var result = await client.ReceiveAsync(token);
 
-                        // Run event on thread pool to avoid blocking receive loop
-                        _ = Task.Run(() => OnUdpMessageReceived?.Invoke(msg));
-                    }
-                } catch (OperationCanceledException) {
-                    break;
-                } catch (Exception ex) {
-                    Console.WriteLine($"[UDP] Receive loop failed: {ex.Message}. Attempting restart in 1s...");
-
-                    // Small delay before restarting
-                    await Task.Delay(1000);
-
-                    // Attempt to restart UDP receive loop
+                    NetworkMessage msg;
                     try
                     {
-                        if (udp.Client != null && udp.Client.Connected)
-                        {
-                            Console.WriteLine("[UDP] Restarting receive loop...");
-                            continue; // re-enter while loop to receive again
-                        }
-                        else
-                        {
-                            Console.WriteLine("[UDP] Socket is closed, cannot restart.");
-                            break;
-                        }
-                    } catch (Exception restartEx) {
-                        Console.WriteLine($"[UDP] Failed to restart: {restartEx.Message}");
-                        break; // give up after failed restart
+                        msg = MessageBuilder.ReadUdpMessage(result.Buffer, includeData: true);
                     }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[CLIENT UDP] Invalid packet: {ex.Message}");
+                        continue; // ignore bad packets
+                    }
+
+                    if (msg.MessageType != MessageType.Custom || msg.TargetId != ClientID)
+                        continue;
+
+                    _ = Task.Run(() => OnUdpMessageReceived?.Invoke(msg), token);
+
+                    _ = Task.Run(() =>
+                    {
+                        try
+                        {
+                            var request = MessageBuilder.UnpackPayload<MethodRequest>(msg.Payload);
+                            if (request == null) throw new Exception("Unable to unpack payload");
+
+                            MethodBuilder.CallClientMethod<object>(request.MethodName!, msg, request.Args!);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[CLIENT UDP] Method execution failed: {ex}");
+                        }
+                    }, token);
                 }
             }
-        });
+            catch (OperationCanceledException)
+            {
+                // Expected on shutdown → DO NOT restart
+                break;
+            }
+            catch (Exception ex)
+            {
+                if (token.IsCancellationRequested)
+                    break;
+
+                Console.WriteLine($"[CLIENT UDP] Receive loop crashed: {ex.Message}");
+                Console.WriteLine("[CLIENT UDP] Recreating socket in 1s...");
+
+                try
+                {
+                    await Task.Delay(1000, token);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }
+
+        client?.Dispose();
+        Console.WriteLine("[CLIENT UDP] Receive loop stopped.");
     }
 
 
@@ -269,10 +299,11 @@ public static partial class Client
         {
             await SendMessageAsync(Server.SERVER_ID, MessageType.ClientDisconnected, null);
 
-            ClientID = 0;
-            Clients.Clear();
-
             _cts?.Cancel();
+
+            ClientID = 0;
+
+            Clients.Clear();
 
             _tcpStream?.Dispose();
             _tcpStream = null;

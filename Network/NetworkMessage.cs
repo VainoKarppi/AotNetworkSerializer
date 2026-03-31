@@ -27,6 +27,7 @@ public class NetworkMessage
 
 
     // Internal members: not visible outside the assembly
+    // TODO set as object. also create method to check if data is serialized or not, and deserialize on demand.
     public string? Payload { get; set; }
 }
 
