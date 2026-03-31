@@ -81,4 +81,19 @@ public static partial class Client
 
         await _tcpStream.WriteAsync(packet);
     }
+
+    private static async Task SendMessageAsync(int targetId, MessageType type, object? data)
+    {
+        if (!IsTcpConnected()) throw new Exception("Not connected to server");
+
+        NetworkMessage message = new()
+        {
+            SenderId = ClientID,
+            TargetId = targetId,
+            MessageType = type
+        };
+        var packet = MessageBuilder.CreateMessage(message, data);
+
+        await _tcpClient!.GetStream().WriteAsync(packet);
+    }
 }
