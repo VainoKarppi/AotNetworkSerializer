@@ -21,8 +21,6 @@ public static partial class Server
 
     public static List<int> GetClients() {
         if (!IsTcpServerRunning()) throw new Exception("Server is not running");
-        // TODO create copy of list to avoid concurrency issues, or return IReadOnlyDictionary?
-        // TODO throw error if not connected to any clients?
         return Clients.Keys.ToList();
     }
 
