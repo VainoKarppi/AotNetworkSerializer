@@ -38,7 +38,9 @@ public static partial class Client
             throw new InvalidOperationException($"Method '{methodName}' not registered in {(targetId == Server.SERVER_ID ? "server" : "client")} methods.");
 
         var payload = new MethodRequest { MethodName = methodName, Args = args };
-        var packet = MessageBuilder.CreateMessage(msg, payload);
+        msg.Payload = Serializer.Serialize(payload);
+
+        var packet = MessageBuilder.CreateUdpMessage(msg);
 
         if (OnUdpMessageSent != null) {
             _ = Task.Run(() => OnUdpMessageSent.Invoke(msg));

@@ -23,13 +23,13 @@ public static partial class Server {
 
     // ── STRING METHOD ──────────────────────────
     // TODO Validate for errors: Throw error, or just add event?
-    public static Task<T?> RequestTcpDataAsync<T>(int targetId, string methodName, params object?[] args) {
-        return RequestTcpDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, new MethodRequest { MethodName = methodName, Args = args });
+    public static Task<T?> RequestDataAsync<T>(int targetId, string methodName, params object?[] args) {
+        return RequestDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, new MethodRequest { MethodName = methodName, Args = args });
     }
         
 
     // ── INTERNAL GENERIC ───────────────────────
-    private static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload)
+    private static async Task<TResult?> RequestDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload)
     {
 
         ushort requestId = MessageBuilder.GenerateRequestId(ref _requestId);

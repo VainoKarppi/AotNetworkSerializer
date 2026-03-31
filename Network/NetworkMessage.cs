@@ -30,13 +30,13 @@ public class NetworkMessage
     public string? Payload { get; set; }
 }
 
-public sealed class MethodRequest
+internal sealed class MethodRequest
 {
     public string? MethodName { get; init; }
     public object?[] Args { get; init; } = [];
 }
 
-public sealed class MethodResponse<T>
+internal sealed class MethodResponse<T>
 {
     public bool Success { get; set; }
     public T? Result { get; set; }
@@ -54,7 +54,7 @@ public enum MessageType
     UdpRegister,
 }
 
-public class HandshakeMessage
+internal class HandshakeMessage
 {
     public bool Success { get; set; }
     public string? Message { get; set; }
@@ -68,19 +68,10 @@ public static class MessageBuilder
 {
     public static bool DEBUG { get; set; } = true;
 
-    internal static ushort GenerateRequestId(ref int requestId)
-    {
-        while (true)
-        {
-            int current = requestId;
-            int next = current >= ushort.MaxValue ? 1 : current + 1;
+    
 
-            if (Interlocked.CompareExchange(ref requestId, next, current) == current)
-                return (ushort)next;
-        }
-    }
-
-    public static byte[] CreateMessage(NetworkMessage msg, bool isUdpMessage = false)
+    #region TCP
+    internal static byte[] CreateTcpMessage(NetworkMessage msg)
     {
         msg.Timestamp = DateTime.UtcNow.Ticks;
 
@@ -107,35 +98,11 @@ public static class MessageBuilder
         // --- PREFIX TOTAL LENGTH ---
         byte[] messageBytes = buffer.ToArray();
 
-        if (isUdpMessage) return messageBytes;
-
         byte[] lengthPrefix = BitConverter.GetBytes(messageBytes.Length);
         return [.. lengthPrefix, .. messageBytes];
     }
 
-    public static byte[] CreateMessage<T>(NetworkMessage msg, T data)
-    {
-        msg.Payload = Serializer.Serialize(data);
-        return CreateMessage(msg);
-    }
-
-    public static T? UnpackPayload<T>(string? data)
-    {
-        if (string.IsNullOrEmpty(data)) return default;
-        return Serializer.Deserialize<T>(data);
-    }
-
-    public static MessageType GetMessageType(byte[] data)
-    {
-        if (data.Length < 4 + 4 + 2) // SenderId + TargetId + MessageType
-            throw new ArgumentException("Packet too short to contain a valid header.", nameof(data));
-
-        // MessageType offset: after SenderId (4) + TargetId (4) = offset 8
-        int offset = 4 + 4;
-        return (MessageType)BitConverter.ToInt16(data, offset);
-    }
-
-    public static NetworkMessage ReadMessage(byte[] data, bool includeData = false)
+    private static NetworkMessage ReadTcpMessage(byte[] data, bool includeData = false)
     {
         if (data.Length < 4 + 4 + 2 + 2 + 8 + 4)
             throw new ArgumentException("Packet too short.", nameof(data));
@@ -169,11 +136,7 @@ public static class MessageBuilder
             Payload = payload
         };
     }
-
-    
-
-    // TODO MOVE TO SHARED (NEW FILE)
-    internal static NetworkMessage? ReadStreamMessage(NetworkStream stream) {
+    internal static NetworkMessage? ReadTcpMessage(NetworkStream stream) {
         // --- READ LENGTH PREFIX (4 bytes) ---
         byte[] lenBuf = new byte[4];
         stream.ReadExactly(lenBuf);
@@ -188,12 +151,126 @@ public static class MessageBuilder
         stream.ReadExactly(messageBytes);
 
         // --- DESERIALIZE ---
-        NetworkMessage msg = ReadMessage(messageBytes, includeData: true);
+        NetworkMessage msg = ReadTcpMessage(messageBytes, includeData: true);
 
         return msg;
     }
+    #endregion
 
     
+
+    
+    #region UDP
+    private static readonly uint[] Crc32Table = CreateCrc32Table();
+
+    internal static byte[] CreateUdpMessage(NetworkMessage msg)
+    {
+        msg.Timestamp = DateTime.UtcNow.Ticks;
+
+        byte[] payloadBytes = string.IsNullOrEmpty(msg.Payload) ? Array.Empty<byte>() : Encoding.UTF8.GetBytes(msg.Payload);
+        int payloadLength = payloadBytes.Length;
+
+        if (DEBUG)
+            Console.WriteLine($"{(msg.SenderId == Server.SERVER_ID ? "[SERVER]" : "[CLIENT]")} (CreateMessage) SenderId:{msg.SenderId}, TargetId:{msg.TargetId}, MessageId:{msg.MessageId}: {msg.Payload}");
+
+        byte[] messageBytes = new byte[4 + 24 + payloadLength]; // 4 bytes checksum + header + payload
+        int offset = 4; // leave space for checksum
+
+        // --- HEADER ---
+        Buffer.BlockCopy(BitConverter.GetBytes(msg.SenderId), 0, messageBytes, offset, 4); offset += 4;
+        Buffer.BlockCopy(BitConverter.GetBytes(msg.TargetId), 0, messageBytes, offset, 4); offset += 4;
+        Buffer.BlockCopy(BitConverter.GetBytes((ushort)msg.MessageType), 0, messageBytes, offset, 2); offset += 2;
+        Buffer.BlockCopy(BitConverter.GetBytes(msg.MessageId), 0, messageBytes, offset, 2); offset += 2;
+        Buffer.BlockCopy(BitConverter.GetBytes(msg.Timestamp), 0, messageBytes, offset, 8); offset += 8;
+        Buffer.BlockCopy(BitConverter.GetBytes(payloadLength), 0, messageBytes, offset, 4); offset += 4;
+
+        // --- PAYLOAD ---
+        if (payloadLength > 0)
+        {
+            Buffer.BlockCopy(payloadBytes, 0, messageBytes, offset, payloadLength);
+            offset += payloadLength;
+        }
+
+        // --- CHECKSUM ---
+        uint checksum = CalculateChecksum(messageBytes, 4, offset - 4); // skip first 4 bytes
+        Buffer.BlockCopy(BitConverter.GetBytes(checksum), 0, messageBytes, 0, 4);
+
+        return messageBytes;
+    }
+
+    internal static NetworkMessage ReadUdpMessage(byte[] data, bool includeData = false)
+    {
+        if (data.Length < 4 + 24)
+            throw new ArgumentException("Packet too short.", nameof(data));
+
+        int offset = 0;
+
+        uint receivedChecksum = BitConverter.ToUInt32(data, offset); offset += 4;
+        uint calculatedChecksum = CalculateChecksum(data, 4, data.Length - 4);
+        if (receivedChecksum != calculatedChecksum)
+            throw new InvalidOperationException("Checksum mismatch.");
+
+        int senderId = BitConverter.ToInt32(data, offset); offset += 4;
+        int targetId = BitConverter.ToInt32(data, offset); offset += 4;
+        MessageType messageType = (MessageType)BitConverter.ToInt16(data, offset); offset += 2;
+        ushort messageId = BitConverter.ToUInt16(data, offset); offset += 2;
+        long timestamp = BitConverter.ToInt64(data, offset); offset += 8;
+        int payloadLength = BitConverter.ToInt32(data, offset); offset += 4;
+
+        string? payload = null;
+        if (includeData && payloadLength > 0)
+            payload = Encoding.UTF8.GetString(data, offset, payloadLength);
+
+        if (DEBUG)
+            Console.WriteLine($"{(targetId == Server.SERVER_ID ? "[SERVER]" : "[CLIENT]")} (ReadMessage) SenderId:{senderId}, TargetId:{targetId}, MessageId:{messageId}: {payload}");
+
+        return new NetworkMessage
+        {
+            SenderId = senderId,
+            TargetId = targetId,
+            MessageType = messageType,
+            MessageId = messageId,
+            Timestamp = timestamp,
+            Payload = payload
+        };
+    }
+
+    // --- CRC32 CHECKSUM ---
+    private static uint CalculateChecksum(byte[] data, int offset, int length)
+    {
+        uint crc = 0xFFFFFFFF;
+        for (int i = offset; i < offset + length; i++)
+            crc = (crc >> 8) ^ Crc32Table[(crc ^ data[i]) & 0xFF];
+        return ~crc;
+    }
+
+    private static uint[] CreateCrc32Table()
+    {
+        uint[] table = new uint[256];
+        const uint poly = 0xEDB88320;
+        for (uint i = 0; i < 256; i++)
+        {
+            uint crc = i;
+            for (int j = 0; j < 8; j++)
+                crc = (crc & 1) != 0 ? (crc >> 1) ^ poly : crc >> 1;
+            table[i] = crc;
+        }
+        return table;
+    }
+
+    #endregion
+
+    #region Helper
+    internal static T? UnpackPayload<T>(string? data)
+    {
+        if (string.IsNullOrEmpty(data)) return default;
+        return Serializer.Deserialize<T>(data);
+    }
+    internal static byte[] CreateMessage<T>(NetworkMessage msg, T data)
+    {
+        msg.Payload = Serializer.Serialize(data);
+        return CreateTcpMessage(msg);
+    }
 
     internal static async Task HandleCustomMessage(NetworkStream stream, NetworkMessage msg, CancellationToken token)
     {
@@ -265,7 +342,18 @@ public static class MessageBuilder
         byte[] packet = CreateMessage(responseMessage, result);
         await stream.WriteAsync(packet, token);
     }
+    internal static ushort GenerateRequestId(ref int requestId)
+    {
+        while (true)
+        {
+            int current = requestId;
+            int next = current >= ushort.MaxValue ? 1 : current + 1;
 
+            if (Interlocked.CompareExchange(ref requestId, next, current) == current)
+                return (ushort)next;
+        }
+    }
+    #endregion
 
 
 }

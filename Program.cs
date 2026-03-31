@@ -114,8 +114,6 @@ class Program
         int clientId = await Client.ConnectAsync("127.0.0.1", 5000, startUdp: true);
         Console.WriteLine($"[CLIENT] Connected with ID: {clientId}");
 
-        PrintAvailableMethods("Server", GetAvailableServerMethods());
-
         while (true)
         {
             try {
@@ -133,6 +131,7 @@ class Program
                         return;
 
                     case "methods":
+                        PrintAvailableMethods("Client", GetAvailableClientMethods());
                         PrintAvailableMethods("Server", GetAvailableServerMethods());
                         break;
                     
@@ -148,6 +147,10 @@ class Program
 
                     case "send":
                         await HandleClientSend(parts);
+                        break;
+                    
+                    case "sendudp":
+                        await Client.SendUdpMessageAsync(Server.SERVER_ID, "GetDataFromServer", "Hello via UDP!");
                         break;
 
                     case "request":
@@ -208,7 +211,7 @@ class Program
 
         try
         {
-            var result = await Client.RequestTcpDataAsync<string>(targetId, methodName, argument);
+            var result = await Client.RequestDataAsync<string>(targetId, methodName, argument);
             Console.WriteLine($"[CLIENT] Result from {targetId}.{methodName}: {result}");
         }
         catch (Exception ex)
@@ -317,7 +320,7 @@ class Program
 
         try
         {
-            var result = await Server.RequestTcpDataAsync<string>(targetId, methodName, argument);
+            var result = await Server.RequestDataAsync<string>(targetId, methodName, argument);
             Console.WriteLine($"[SERVER] Result from client {targetId}.{methodName}: {result}");
         }
         catch (Exception ex)

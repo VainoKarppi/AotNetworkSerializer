@@ -81,7 +81,7 @@ public static partial class Server
         {
             while (!token.IsCancellationRequested && client.Connected)
             {
-                NetworkMessage? msg = MessageBuilder.ReadStreamMessage(client.GetStream());
+                NetworkMessage? msg = MessageBuilder.ReadTcpMessage(client.GetStream());
                 if (msg == null) break;
 
                 if (msg.MessageType == MessageType.Handshake) {
@@ -144,8 +144,11 @@ public static partial class Server
                 {
                     while (!_cts.Token.IsCancellationRequested)
                     {
+                        Console.WriteLine("[SERVER UDP] Waiting for messages...");
                         var result = await _udpListener!.ReceiveAsync(_cts.Token);
-                        NetworkMessage msg = MessageBuilder.ReadMessage(result.Buffer, includeData: true);
+
+                        // TODO validate message. Make sure data is correct
+                        NetworkMessage msg = MessageBuilder.ReadUdpMessage(result.Buffer, includeData: true);
 
                         if (msg.MessageType == MessageType.UdpRegister) {
                             // Bind UDP endpoint to client
@@ -161,6 +164,7 @@ public static partial class Server
                             continue;
                         }
 
+                        Console.WriteLine($"[SERVER UDP] Received message from {result.RemoteEndPoint}: Type={msg.MessageType}, SenderId={msg.SenderId}, TargetId={msg.TargetId}, Payload={msg.Payload}");
                         // Send event on thread pool to avoid blocking receive loop
                         _ = Task.Run(() => OnUdpMessageReceived?.Invoke(msg));
                     }
@@ -310,7 +314,7 @@ public static partial class Server
             return;
         }
 
-        object? result = await RequestTcpDataAsync<object>(target.Id, request.MethodName!, request.Args);
+        object? result = await RequestDataAsync<object>(target.Id, request.MethodName!, request.Args);
 
         NetworkMessage response = new()
         {

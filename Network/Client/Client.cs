@@ -63,7 +63,7 @@ public static partial class Client
             AvailableMethods = availableMethods
         };
         
-        HandshakeMessage? response = await RequestTcpDataInternalAsync(Server.SERVER_ID, MessageType.Handshake, handshake);
+        HandshakeMessage? response = await RequestDataInternalAsync(Server.SERVER_ID, MessageType.Handshake, handshake);
         if (response == null) throw new Exception("Handshake failed (Connection lost)");
 
         if (!response.Success) throw new Exception(response.Message ?? "Handshake failed (Unknown reason)");
@@ -74,7 +74,7 @@ public static partial class Client
         int count = MethodBuilder.RegisterFromHandshake(response.AvailableMethods, isServer: false);
 
         // Allow API user to request custom data from server, before connect success (eg. other clients etc)
-        OnClientConnected?.Invoke(response);
+        OnClientConnected?.Invoke(response.ClientId);
 
         return ClientID;
     }
@@ -93,7 +93,7 @@ public static partial class Client
             MessageType = MessageType.UdpRegister
         };
 
-        var packet = MessageBuilder.CreateMessage(registerMsg, true);
+        var packet = MessageBuilder.CreateUdpMessage(registerMsg);
         
         await _udpClient.SendAsync(packet.AsMemory(), _udpEndpoint, _cts.Token);
     }
@@ -111,7 +111,7 @@ public static partial class Client
                 while (!_cts.Token.IsCancellationRequested)
                 {
                     // Read ONE full message from stream using the proper helper
-                    NetworkMessage? msg = MessageBuilder.ReadStreamMessage(stream);
+                    NetworkMessage? msg = MessageBuilder.ReadTcpMessage(stream);
                     if (msg == null)
                     {
                         // Connection lost or stream closed
@@ -203,7 +203,7 @@ public static partial class Client
                     while (!_cts.Token.IsCancellationRequested)
                     {
                         UdpReceiveResult result = await udp.ReceiveAsync(_cts.Token);
-                        NetworkMessage msg = MessageBuilder.ReadMessage(result.Buffer, includeData: true);
+                        NetworkMessage msg = MessageBuilder.ReadUdpMessage(result.Buffer, includeData: true);
 
                         // Run event on thread pool to avoid blocking receive loop
                         _ = Task.Run(() => OnUdpMessageReceived?.Invoke(msg));

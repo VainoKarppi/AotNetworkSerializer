@@ -33,7 +33,7 @@ public static partial class Client {
 
     // ── STRING METHOD ──────────────────────────
     // TODO Validate for errors: Throw error, or just add event?
-    public static Task<T?> RequestTcpDataAsync<T>(int targetId, string methodName, params object?[] args)
+    public static Task<T?> RequestDataAsync<T>(int targetId, string methodName, params object?[] args)
     {
         bool isVoid = IsVoidMethod(targetId, methodName);
 
@@ -41,7 +41,7 @@ public static partial class Client {
 
         var payload = new MethodRequest { MethodName = methodName, Args = args };
 
-        return RequestTcpDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, payload, requestId, waitForResponse: !isVoid);
+        return RequestDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, payload, requestId, waitForResponse: !isVoid);
     }
         
 
@@ -62,7 +62,7 @@ public static partial class Client {
     }
 
     // ── INTERNAL GENERIC ───────────────────────
-    private static async Task<TResult?> RequestTcpDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload, ushort requestId, bool waitForResponse) {
+    private static async Task<TResult?> RequestDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload, ushort requestId, bool waitForResponse) {
         if (_tcpStream == null) throw new InvalidOperationException("TCP not initialized.");
 
         NetworkMessage msg = new()
@@ -90,11 +90,11 @@ public static partial class Client {
     }
 
     // ── HELPER OVERLOAD FOR SIMPLE CASE ───────
-    internal static Task<T?> RequestTcpDataInternalAsync<T>(int targetId, MessageType type, T payload)
+    internal static Task<T?> RequestDataInternalAsync<T>(int targetId, MessageType type, T payload)
     {
         ushort requestId = MessageBuilder.GenerateRequestId(ref _requestId);
 
-        return RequestTcpDataInternalAsync<T, T>(targetId, type, payload, requestId, waitForResponse: true);
+        return RequestDataInternalAsync<T, T>(targetId, type, payload, requestId, waitForResponse: true);
     }
     
 

@@ -24,7 +24,7 @@ public static partial class Server
 
     public static event Action<HandshakeFailureReason, string>? OnHandshakeFailed;
 
-    public static event Action<HandshakeMessage>? OnClientConnected;
+    public static event Action<int>? OnClientConnected;
     public static event Action<NetworkMessage>? OnClientDisconnected;
 
     public static event Action<NetworkMessage>? OnTcpMessageSent;
