@@ -51,7 +51,7 @@ public enum MessageType
     Request,
     Response,
     Custom,
-    Update,
+    UdpRegister,
 }
 
 public class HandshakeMessage
@@ -66,6 +66,8 @@ public class HandshakeMessage
 
 public static class MessageBuilder
 {
+    public static bool DEBUG { get; set; } = true;
+
     internal static ushort GenerateRequestId(ref int requestId)
     {
         while (true)
@@ -78,8 +80,7 @@ public static class MessageBuilder
         }
     }
 
-    public static bool DEBUG { get; set; } = true;
-    public static byte[] CreateMessage(NetworkMessage msg)
+    public static byte[] CreateMessage(NetworkMessage msg, bool isUdpMessage = false)
     {
         msg.Timestamp = DateTime.UtcNow.Ticks;
 
@@ -105,8 +106,10 @@ public static class MessageBuilder
 
         // --- PREFIX TOTAL LENGTH ---
         byte[] messageBytes = buffer.ToArray();
-        byte[] lengthPrefix = BitConverter.GetBytes(messageBytes.Length);
 
+        if (isUdpMessage) return messageBytes;
+
+        byte[] lengthPrefix = BitConverter.GetBytes(messageBytes.Length);
         return [.. lengthPrefix, .. messageBytes];
     }
 

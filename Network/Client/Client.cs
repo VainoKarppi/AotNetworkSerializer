@@ -41,7 +41,7 @@ public static partial class Client
     public static async Task<int> ConnectAsync(string host, int port, bool startUdp = false, string? customHash = null)
     {
         int userId = await ConnectTcp(host, port, null);
-        if (startUdp) ConnectUdp(host, port);
+        if (startUdp) await ConnectUdp(host, port);
 
         return userId;
     }
@@ -63,7 +63,6 @@ public static partial class Client
             AvailableMethods = availableMethods
         };
         
-        
         HandshakeMessage? response = await RequestTcpDataInternalAsync(Server.SERVER_ID, MessageType.Handshake, handshake);
         if (response == null) throw new Exception("Handshake failed (Connection lost)");
 
@@ -81,12 +80,22 @@ public static partial class Client
     }
 
     // ── Connect UDP ──────────────────────────
-    private static void ConnectUdp(string host, int port)
+    private static async Task ConnectUdp(string host, int port)
     {
         _udpClient = new UdpClient();
         _udpEndpoint = new IPEndPoint(IPAddress.Parse(host), port);
         _cts = new CancellationTokenSource();
         StartUdpReceiveLoop(_udpClient);
+
+        NetworkMessage registerMsg = new() {
+            SenderId = ClientID,
+            TargetId = Server.SERVER_ID,
+            MessageType = MessageType.UdpRegister
+        };
+
+        var packet = MessageBuilder.CreateMessage(registerMsg, true);
+        
+        await _udpClient.SendAsync(packet.AsMemory(), _udpEndpoint, _cts.Token);
     }
 
 

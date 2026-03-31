@@ -10,10 +10,11 @@ public static partial class Server
     public const int SERVER_ID = 1;
     private static int _clientIdCounter = 1;
 
-    public class Connection : TcpClient
+    private class Connection : TcpClient
     {
-        public int Id { get; set; } = Interlocked.Increment(ref _clientIdCounter);
-        public bool HandshakeDone { get; set; } = false;
+        internal int Id { get; set; } = Interlocked.Increment(ref _clientIdCounter);
+        internal bool HandshakeDone { get; set; } = false;
+        internal IPEndPoint? UdpEndpoint { get; set; }
     }
 
     private readonly static Dictionary<int, Connection> Clients = [];
@@ -128,6 +129,7 @@ public static partial class Server
         _udpListener = new UdpClient(port);
         _cts = new CancellationTokenSource();
         StartUdpServerReceiveLoop(_cts.Token);
+        Console.WriteLine("[SERVER] UDP Server started");
     }
 
     private static void StartUdpServerReceiveLoop(CancellationToken token)
@@ -143,7 +145,21 @@ public static partial class Server
                     while (!_cts.Token.IsCancellationRequested)
                     {
                         var result = await _udpListener!.ReceiveAsync(_cts.Token);
-                        var msg = MessageBuilder.ReadMessage(result.Buffer, includeData: true);
+                        NetworkMessage msg = MessageBuilder.ReadMessage(result.Buffer, includeData: true);
+
+                        if (msg.MessageType == MessageType.UdpRegister) {
+                            // Bind UDP endpoint to client
+                            if (msg.SenderId != 0 && Clients.TryGetValue(msg.SenderId, out var client))
+                            {
+                                // Only update if not set OR endpoint changed (NAT rebinding)
+                                if (client.UdpEndpoint == null || !client.UdpEndpoint.Equals(result.RemoteEndPoint))
+                                {
+                                    client.UdpEndpoint = result.RemoteEndPoint;
+                                    Console.WriteLine($"[SERVER UDP] Registered UDP endpoint for client {client.Id}: {client.UdpEndpoint}");
+                                }
+                            }
+                            continue;
+                        }
 
                         // Send event on thread pool to avoid blocking receive loop
                         _ = Task.Run(() => OnUdpMessageReceived?.Invoke(msg));
