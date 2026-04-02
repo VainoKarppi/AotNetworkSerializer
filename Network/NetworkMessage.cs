@@ -51,6 +51,7 @@ public enum MessageType
     ClientDisconnected,
     Request,
     Response,
+    ResponseBroadcast,
     Custom,
     UdpRegister,
 }
@@ -267,7 +268,7 @@ public static class MessageBuilder
         if (string.IsNullOrEmpty(data)) return default;
         return Serializer.Deserialize<T>(data);
     }
-    internal static byte[] CreateMessage<T>(NetworkMessage msg, T data)
+    internal static byte[] CreatePacket<T>(NetworkMessage msg, T data)
     {
         msg.Payload = Serializer.Serialize(data);
         return CreateTcpMessage(msg);
@@ -340,7 +341,7 @@ public static class MessageBuilder
 
         if (DEBUG) Console.WriteLine($"{(responseMessage.SenderId == Server.SERVER_ID ? "[SERVER]" : "[CLIENT]")} Sending response for method: SUCCESS:{success}, ({(result == null ? "null" : result.GetType().Name)}):{Serializer.Serialize(result)}");
         
-        byte[] packet = CreateMessage(responseMessage, result);
+        byte[] packet = CreatePacket(responseMessage, result);
         await stream.WriteAsync(packet, token);
     }
     internal static ushort GenerateRequestId(ref int requestId)

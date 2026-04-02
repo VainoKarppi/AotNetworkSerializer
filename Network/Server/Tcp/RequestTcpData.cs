@@ -52,11 +52,11 @@ public static partial class Server {
         }
         Requests.Add(requestId);
 
-        var packet = MessageBuilder.CreateMessage(msg, payload);
+        var packet = MessageBuilder.CreatePacket(msg, payload);
         await client.GetStream().WriteAsync(packet);
         
         
-        NetworkMessage? returnMessage = await WaitWithTimeout(requestId, TIMEOUT_MS);
+        NetworkMessage? returnMessage = await WaitWithTimeout(requestId);
         if (returnMessage == null || returnMessage.Payload == null) return default;
 
         return MessageBuilder.UnpackPayload<TResult>(returnMessage.Payload);
@@ -64,17 +64,17 @@ public static partial class Server {
 
 
 
-    private static async Task<NetworkMessage?> WaitWithTimeout(int requestId, int timeoutMs)
+    private static async Task<NetworkMessage?> WaitWithTimeout(int requestId)
     {
         try
         {
-            using var cts = new CancellationTokenSource(timeoutMs);
+            using var cts = new CancellationTokenSource(TIMEOUT_MS);
 
             // Polling loop, but asynchronously
             NetworkMessage? response;
             while (!Responses.TryGetValue(requestId, out response))
             {
-                if (cts.Token.IsCancellationRequested) throw new TimeoutException($"Request {requestId} timed out after {timeoutMs} ms");
+                if (cts.Token.IsCancellationRequested) throw new TimeoutException($"Request {requestId} timed out after {TIMEOUT_MS} ms");
 
                 await Task.Delay(10, cts.Token); // async wait
             }
@@ -88,7 +88,7 @@ public static partial class Server {
         {
             Requests.Remove(requestId);
             Responses.TryRemove(requestId, out _);
-            throw new TimeoutException($"[TIMEOUT] Request {requestId} timed out after {timeoutMs} ms");
+            throw new TimeoutException($"[TIMEOUT] Request {requestId} timed out after {TIMEOUT_MS} ms");
         }
         catch (Exception ex)
         {

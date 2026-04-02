@@ -71,10 +71,31 @@ public static partial class Server
                     if (msg.MessageType != MessageType.Custom) continue;
 
                     // --- Forward to target ---
-                    if (msg.TargetId != SERVER_ID)
+                    if (msg.TargetId == SERVER_ID)
                     {
-                        if (!Clients.TryGetValue(msg.TargetId, out var targetClient) || targetClient.UdpEndpoint == null)
+                        // --- Handle server-bound message ---
+                        Console.WriteLine($"[SERVER UDP] Received message from {result.RemoteEndPoint}: Type={msg.MessageType}, SenderId={msg.SenderId}, TargetId={msg.TargetId}, Payload={msg.Payload}");
+
+                        _ = Task.Run(() => OnUdpMessageReceived?.Invoke(msg));
+
+                        _ = Task.Run(() =>
                         {
+                            try
+                            {
+                                MethodRequest? request = MessageBuilder.UnpackPayload<MethodRequest>(msg.Payload);
+                                if (request == null) throw new Exception("Unable to unpack payload");
+
+                                MethodBuilder.CallServerMethod<object>(request.MethodName!, msg, request.Args!);
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[SERVER UDP] Method execution failed: {ex}");
+                            }
+                        }, token);
+                    }
+
+                    if (msg.TargetId > 0) {
+                        if (!Clients.TryGetValue(msg.TargetId, out var targetClient) || targetClient.UdpEndpoint == null) {
                             Console.WriteLine($"[SERVER UDP] Cannot forward, target {msg.TargetId} not available.");
                             continue;
                         }
@@ -91,25 +112,10 @@ public static partial class Server
                         continue;
                     }
 
-                    // --- Handle server-bound message ---
-                    Console.WriteLine($"[SERVER UDP] Received message from {result.RemoteEndPoint}: Type={msg.MessageType}, SenderId={msg.SenderId}, TargetId={msg.TargetId}, Payload={msg.Payload}");
-
-                    _ = Task.Run(() => OnUdpMessageReceived?.Invoke(msg));
-
-                    _ = Task.Run(() =>
-                    {
-                        try
-                        {
-                            MethodRequest? request = MessageBuilder.UnpackPayload<MethodRequest>(msg.Payload);
-                            if (request == null) throw new Exception("Unable to unpack payload");
-
-                            MethodBuilder.CallServerMethod<object>(request.MethodName!, msg, request.Args!);
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[SERVER UDP] Method execution failed: {ex}");
-                        }
-                    }, token);
+                    // --- Broadcast to all clients ---
+                    Console.WriteLine($"[SERVER UDP] Broadcasting message from {msg.SenderId} to all clients via UDP.");
+                    await HandleBroadcastMessage(senderClient, msg, isUdp: true);
+                    
                 }
                 catch (OperationCanceledException)
                 {
@@ -134,5 +140,31 @@ public static partial class Server
 
             Console.WriteLine("[SERVER UDP] Receive loop stopped.");
         }, token);
+    }
+
+
+
+    private static async Task BroadcastUdp(Connection sender, NetworkMessage message)
+    {
+        foreach (var client in Clients.Values)
+        {
+            if (!client.Connected || client.Id == sender.Id || client.UdpEndpoint == null)
+                continue;
+
+            Console.WriteLine($"[NETWORK] Broadcasting UDP message from {message.SenderId} to client {client.Id}");
+
+            NetworkMessage udpMsg = new()
+            {
+                SenderId = message.SenderId,
+                TargetId = client.Id,
+                MessageType = MessageType.Custom,
+                Payload = message.Payload
+            };
+
+            var packet = MessageBuilder.CreateUdpMessage(udpMsg);
+
+            // Fire-and-forget is fine for UDP
+            _ = _udpListener!.SendAsync(packet.AsMemory(), client.UdpEndpoint);
+        }
     }
 }

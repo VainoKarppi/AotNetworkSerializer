@@ -76,7 +76,7 @@ public static partial class Client {
         if (waitForResponse)
             Requests.Add(requestId);
 
-        byte[] packet = MessageBuilder.CreateMessage(msg, payload);
+        byte[] packet = MessageBuilder.CreatePacket(msg, payload);
         await _tcpStream.WriteAsync(packet);
 
         if (!waitForResponse)

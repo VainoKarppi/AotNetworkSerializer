@@ -119,14 +119,8 @@ public static partial class Server
             MessageId = message.MessageId,
             MessageType = MessageType.Handshake
         };
-        var packet2 = MessageBuilder.CreateMessage(response, handshake);
+        var packet2 = MessageBuilder.CreatePacket(response, handshake);
 
         await client.GetStream().WriteAsync(packet2);
     }
-
-
-
 }
-
-
-

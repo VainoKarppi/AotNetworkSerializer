@@ -37,7 +37,7 @@ public static partial class Server
             throw new InvalidOperationException($"Method '{methodName}' not registered in {(targetId == SERVER_ID ? "server" : "client")} methods.");
 
         var payload = new MethodRequest { MethodName = methodName, Args = args };
-        var packet = MessageBuilder.CreateMessage(msg, payload);
+        var packet = MessageBuilder.CreatePacket(msg, payload);
 
         await client.GetStream().WriteAsync(packet);
     }

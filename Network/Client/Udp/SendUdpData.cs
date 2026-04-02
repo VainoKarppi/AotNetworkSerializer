@@ -31,7 +31,7 @@ public static partial class Client
             throw new InvalidOperationException($"Method '{methodName}' not registered in {(targetId == Server.SERVER_ID ? "server" : "client")} methods.");
 
         var payload = new MethodRequest { MethodName = methodName, Args = args };
-
+        
         NetworkMessage msg = new()
         {
             SenderId = ClientID,

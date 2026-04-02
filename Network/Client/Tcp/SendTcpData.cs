@@ -37,7 +37,7 @@ public static partial class Client
             throw new InvalidOperationException($"Method '{methodName}' not registered in {(targetId == Server.SERVER_ID ? "server" : "client")} methods.");
 
         var payload = new MethodRequest { MethodName = methodName, Args = args };
-        var packet = MessageBuilder.CreateMessage(msg, payload);
+        var packet = MessageBuilder.CreatePacket(msg, payload);
 
         if (OnTcpMessageSent != null) {
             _ = Task.Run(() => OnTcpMessageSent.Invoke(msg));
@@ -56,7 +56,7 @@ public static partial class Client
             TargetId = targetId,
             MessageType = type
         };
-        var packet = MessageBuilder.CreateMessage(message, data);
+        var packet = MessageBuilder.CreatePacket(message, data);
 
         await _tcpClient!.GetStream().WriteAsync(packet);
     }
