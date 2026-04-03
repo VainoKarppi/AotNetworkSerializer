@@ -14,38 +14,26 @@ public static partial class Server
     
 
     // ── Start UDP server ──────────────────────
-    private static void StartUdp(int port)
-    {
+    private static void StartUdp(int port) {
         _udpListener = new UdpClient(port);
         _cts = new CancellationTokenSource();
         StartUdpServerReceiveLoop(port, _cts.Token);
         Console.WriteLine("[SERVER] UDP Server started");
     }
 
-    private static void StartUdpServerReceiveLoop(int port, CancellationToken token)
-    {
+    private static void StartUdpServerReceiveLoop(int port, CancellationToken token) {
         _cts ??= new CancellationTokenSource();
 
-        _ = Task.Run(async () =>
-        {
-            while (!token.IsCancellationRequested)
-            {
-                try
-                {
+        _ = Task.Run(async () => {
+            while (!token.IsCancellationRequested) {
+                try {
                     // --- Ensure listener exists ---
-                    if (_udpListener == null || !_udpListener.Client.IsBound)
-                    {
-                        Console.WriteLine("[SERVER UDP] Listener missing or not bound. Recreating...");
-
-                        try
-                        {
+                    if (_udpListener == null || !_udpListener.Client.IsBound) {
+                        try {
                             _udpListener?.Dispose();
-                        }
-                        catch { /* ignore */ }
+                        } catch {}
 
-                        _udpListener = new UdpClient(port); // <-- use your port
-
-                        Console.WriteLine("[SERVER UDP] Listener recreated.");
+                        _udpListener = new UdpClient(port);
                     }
 
                     // --- Receive ---
@@ -59,10 +47,8 @@ public static partial class Server
                     // --- Handle registration ---
                     if (msg.MessageType == MessageType.UdpRegister)
                     {
-                        if (senderClient.UdpEndpoint == null || !senderClient.UdpEndpoint.Equals(result.RemoteEndPoint))
-                        {
+                        if (senderClient.UdpEndpoint == null || !senderClient.UdpEndpoint.Equals(result.RemoteEndPoint)) {
                             senderClient.UdpEndpoint = result.RemoteEndPoint;
-                            Console.WriteLine($"[SERVER UDP] Registered UDP endpoint for client {senderClient.Id}: {senderClient.UdpEndpoint}");
                         }
                         continue;
                     }
@@ -70,12 +56,8 @@ public static partial class Server
                     // --- Validate message type ---
                     if (msg.MessageType != MessageType.Custom) continue;
 
-                    // --- Forward to target ---
-                    if (msg.TargetId == SERVER_ID)
-                    {
-                        // --- Handle server-bound message ---
-                        Console.WriteLine($"[SERVER UDP] Received message from {result.RemoteEndPoint}: Type={msg.MessageType}, SenderId={msg.SenderId}, TargetId={msg.TargetId}, Payload={msg.Payload}");
-
+                    // --- Handle server-bound message ---
+                    if (msg.TargetId == SERVER_ID) {
                         _ = Task.Run(() => OnUdpMessageReceived?.Invoke(msg));
 
                         _ = Task.Run(() =>

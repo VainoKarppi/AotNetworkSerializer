@@ -19,46 +19,52 @@ public static partial class Server
 
     public static async Task SendUdpMessageAsync(int targetId, string methodName, params object?[] args)
     {
-        if (!IsUdpServerRunning()) 
-            throw new InvalidOperationException("UDP server not running.");
+        if (!IsUdpServerRunning()) throw new InvalidOperationException("UDP server not running.");
 
-        // Get client
-        if (!Clients.TryGetValue(targetId, out Connection? client) || client == null)
-            throw new Exception($"Client not found with ID: {targetId}");
-        
-        // Validate UDP endpoint
-        if (client.UdpEndpoint == null)
-            throw new InvalidOperationException($"Client {targetId} has no registered UDP endpoint.");
+        if (targetId == SERVER_ID) throw new InvalidOperationException("Cannot send UDP message to server itself.");
 
+        // Validate method once
+        var methodExists = MethodBuilder.GetAvailableClientMethods()
+            .Any(m => m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
 
-        // Validate method exists
-        var methods = MethodBuilder.GetAvailableClientMethods();
-        var method = methods.FirstOrDefault(m => m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
-        if (method == null)
-            throw new InvalidOperationException($"Method '{methodName}' is not registered in client methods.");
+        if (!methodExists) throw new InvalidOperationException($"Method '{methodName}' is not registered in client methods.");
 
-        // Pack payload
         var payload = new MethodRequest { MethodName = methodName, Args = args };
 
-        NetworkMessage msg = new()
-        {
-            SenderId = targetId,
-            TargetId = targetId,
-            MessageType = MessageType.Custom,
-            Payload = Serializer.Serialize(payload)
-        };
+        async Task SendToClient(Connection client) {
+            try {
+                if (client?.UdpEndpoint == null)
+                    throw new InvalidOperationException($"Client {client?.Id} has no registered UDP endpoint.");
 
-        var packet = MessageBuilder.CreateUdpMessage(msg);
+                var msg = new NetworkMessage
+                {
+                    SenderId = targetId,
+                    TargetId = client.Id,
+                    MessageType = MessageType.Custom,
+                    Payload = Serializer.Serialize(payload)
+                };
 
-        try
-        {
-            // Send via server UDP to the client's registered endpoint
-            await _udpListener!.SendAsync(packet, packet.Length, client.UdpEndpoint);
+                var packet = MessageBuilder.CreateUdpMessage(msg);
+
+                await _udpListener!.SendAsync(packet, packet.Length, client.UdpEndpoint);
+            } catch (Exception ex) {
+                Console.WriteLine($"[SERVER UDP] Failed to send to client {client.Id}: {ex.Message}");
+            }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[SERVER UDP] Failed to send to client {targetId}: {ex.Message}");
-            throw;
+
+        // Single target
+        if (targetId > 1) {
+            if (!Clients.TryGetValue(targetId, out var client) || client == null) throw new Exception($"Client not found with ID: {targetId}");
+
+            await SendToClient(client);
+            return;
+        }
+
+        // Broadcast
+        foreach (var client in Clients.Values) {
+            if (client?.UdpEndpoint == null) continue;
+
+            await SendToClient(client);
         }
     }
 }
