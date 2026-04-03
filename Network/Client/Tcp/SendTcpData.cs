@@ -36,6 +36,11 @@ public static partial class Client
         if (method == null)
             throw new InvalidOperationException($"Method '{methodName}' not registered in {(targetId == Server.SERVER_ID ? "server" : "client")} methods.");
 
+        // Make sure client is connected to server before sending message
+        if (targetId > 1 && !Clients.Contains(targetId)) {
+            throw new InvalidOperationException($"Cannot send TCP message to client {targetId} because it is not connected to the server.");
+        }
+        
         var payload = new MethodRequest { MethodName = methodName, Args = args };
         var packet = MessageBuilder.CreatePacket(msg, payload);
 

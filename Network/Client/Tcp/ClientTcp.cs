@@ -126,12 +126,14 @@ public static partial class Client
                     }
 
                     if (msg.MessageType == MessageType.Custom) {
+                        // Invoke event 
+                        _ = Task.Run(() => OnTcpMessageReceived?.Invoke(msg));
+
                         await MessageBuilder.HandleCustomMessage(stream, msg, token);
                         continue;
                     }
 
-                    // --- CUSTOM EVENT ---
-                    OnTcpMessageReceived?.Invoke(msg);
+                    
                 }
             }
             catch (OperationCanceledException)

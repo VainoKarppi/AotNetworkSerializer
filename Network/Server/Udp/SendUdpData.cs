@@ -25,10 +25,10 @@ public static partial class Server
         // Get client
         if (!Clients.TryGetValue(targetId, out Connection? client) || client == null)
             throw new Exception($"Client not found with ID: {targetId}");
-
+        
         // Validate UDP endpoint
         if (client.UdpEndpoint == null)
-            throw new InvalidOperationException($"Client {targetId} has no registered UDP endpoint. Make sure they sent a UdpRegister message.");
+            throw new InvalidOperationException($"Client {targetId} has no registered UDP endpoint.");
 
 
         // Validate method exists

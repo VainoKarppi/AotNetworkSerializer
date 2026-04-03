@@ -76,16 +76,18 @@ public static partial class Server
                 }
 
                 if (msg.MessageType == MessageType.Custom) {
+
+                    _ = Task.Run(() => OnTcpMessageReceived?.Invoke(msg));
+                    
                     if (msg.TargetId == SERVER_ID) {
                        await MessageBuilder.HandleCustomMessage(client.GetStream(), msg, token); 
                     } else {
-                        await ForwardMessageToTarget(client, msg);
+                        // Handle broadcast message
+                        _ = msg.TargetId == 0 ? BroadcastTcp(client, msg) : ForwardTcpMessageToTarget(client, msg);
                     }
                     
                     continue;
                 }
-
-                OnTcpMessageReceived?.Invoke(msg);
             }
         }
         catch (Exception)
@@ -109,24 +111,93 @@ public static partial class Server
             TargetId = targetId,
             MessageType = type
         };
-        var packet = MessageBuilder.CreateMessage(message, data);
+        var packet = MessageBuilder.CreatePacket(message, data);
 
         await client.GetStream().WriteAsync(packet);
     }
 
+
+    private static async Task BroadcastTcp(Connection sender, NetworkMessage message)
+    {
+        var tasks = new List<Task<object?>>();
+
+        foreach (var client in Clients.Values.Where(c => c.Connected && c.Id != sender.Id))
+        {
+            // If MessageId == 0, we treat it as a fire-and-forget broadcast, where we don't expect any response from the clients. We just send the message to all clients and return immediately.
+            if (message.MessageId == 0) {
+                Console.WriteLine($"[NETWORK] Broadcasting TCP message from {message.SenderId} to client {client.Id}");
+                _ = SendMessageAsync(client, client.Id, message.MessageType, message.Payload);
+                continue;
+            }
+            
+            // If MessageId > 0, we expect a response from each client, which we will aggregate and send back to the sender once all responses are received or timeout occurs.
+
+            Console.WriteLine($"[NETWORK] Broadcasting message {message.MessageId} from {message.SenderId} to client {client.Id} and waiting for response");
+
+            tasks.Add(Task.Run(async () =>
+            {
+                ushort requestId = MessageBuilder.GenerateRequestId(ref _requestId);
+                Requests.Add(requestId);
+
+                var requestMessage = new NetworkMessage
+                {
+                    SenderId = message.SenderId,
+                    TargetId = client.Id,
+                    MessageType = message.MessageType,
+                    MessageId = requestId,
+                    Payload = message.Payload
+                };
+
+                var data = MessageBuilder.CreateTcpMessage(requestMessage);
+                await client.GetStream().WriteAsync(data);
+
+                NetworkMessage? returnMessage = await WaitWithTimeout(requestId);
+                if (returnMessage == null || returnMessage.Payload == null) return null;
+
+                return MessageBuilder.UnpackPayload<object>(returnMessage.Payload);
+            }));
+        }
+
+        object?[] broadcastResponses = [];
+
+        if (tasks.Count > 0)
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TIMEOUT_MS);
+
+                var results = await Task.WhenAll(tasks).WaitAsync(cts.Token);
+
+                broadcastResponses = results.Where(r => r != null).ToArray();
+            }
+            catch (OperationCanceledException)
+            {
+                throw new TimeoutException("Broadcast timed out.");
+            }
+        }
+
+        NetworkMessage broadcastResponse = new()
+        {
+            SenderId = SERVER_ID,
+            TargetId = message.SenderId,
+            MessageId = message.MessageId,
+            MessageType = MessageType.ResponseBroadcast
+        };
+
+        var broadcastResponseData = MessageBuilder.CreatePacket(broadcastResponse, broadcastResponses);
+
+        await sender.GetStream().WriteAsync(broadcastResponseData);
+    }
 
 
     /// <summary>
     /// Placeholder method to forward a message to the correct target.
     /// Implementation should locate the target client by ID and send the message.
     /// </summary>
-    private static async Task ForwardMessageToTarget(Connection sender, NetworkMessage message)
+    private static async Task ForwardTcpMessageToTarget(Connection sender, NetworkMessage message)
     {
         Console.WriteLine($"[NETWORK] Forwarding message {message.MessageId} from {message.SenderId} to {message.TargetId}");
 
-        // TODO set as a setting
-        bool maskSender = false;
-        if (maskSender) message.SenderId = SERVER_ID;
 
         Connection? target = Clients[message.TargetId];
         if (target == null) {
@@ -143,14 +214,15 @@ public static partial class Server
 
         object? result = await RequestDataAsync<object>(target.Id, request.MethodName!, request.Args);
 
+        bool maskSender = false; // TODO set as a setting
         NetworkMessage response = new()
         {
-            SenderId = SERVER_ID,
+            SenderId = maskSender ? SERVER_ID : message.SenderId,
             TargetId = message.SenderId,
             MessageId = message.MessageId,
             MessageType = MessageType.Handshake
         };
-        var packet = MessageBuilder.CreateMessage(response, result);
+        var packet = MessageBuilder.CreatePacket(response, result);
 
         await sender.GetStream().WriteAsync(packet);
     }

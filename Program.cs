@@ -48,6 +48,9 @@ class Program
     public static void OnTcpMessageReceived(NetworkMessage message){
         Console.WriteLine($"*EVENT* [CLIENT {Client.ClientID}] OnTcpMessageReceived {Serializer.Serialize(message, new Serializer.Options { WriteIndented = true })}");
     }
+    public static void OnTcpMessageSentServer(NetworkMessage message){
+        Console.WriteLine($"*EVENT* [SERVER] OnTcpMessageSent {Serializer.Serialize(message, new Serializer.Options { WriteIndented = true })}");
+    }
     public static void OnTcpMessageReceivedServer(NetworkMessage message){
         Console.WriteLine($"*EVENT* [SERVER] OnTcpMessageReceived {Serializer.Serialize(message, new Serializer.Options { WriteIndented = true })}");
     }
@@ -89,6 +92,7 @@ class Program
         if (serverMode || dedicatedMode)
         {
             Server.OnTcpMessageReceived += OnTcpMessageReceivedServer;
+            Server.OnTcpMessageSent += OnTcpMessageSentServer;
             Server.OnServerShutdown += OnServerShutdownServer;
         }
 
@@ -331,7 +335,7 @@ class Program
         try
         {
             var result = await Server.RequestDataAsync<string>(targetId, methodName, argument);
-            Console.WriteLine($"[SERVER] Result from client {targetId}.{methodName}: {result}");
+            Console.WriteLine($"[SERVER] Result from client {targetId} ({methodName}): {result}");
         }
         catch (Exception ex)
         {

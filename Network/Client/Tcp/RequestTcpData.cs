@@ -65,6 +65,11 @@ public static partial class Client {
     private static async Task<TResult?> RequestDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload, ushort requestId, bool waitForResponse) {
         if (_tcpStream == null) throw new InvalidOperationException("TCP not initialized.");
 
+        // Make sure client is connected to server before sending message
+        if (targetId > 1 && !Clients.Contains(targetId)) {
+            throw new InvalidOperationException($"Cannot send TCP message to client {targetId} because it is not connected to the server.");
+        }
+
         NetworkMessage msg = new()
         {
             SenderId = ClientID,

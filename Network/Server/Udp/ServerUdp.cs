@@ -114,7 +114,7 @@ public static partial class Server
 
                     // --- Broadcast to all clients ---
                     Console.WriteLine($"[SERVER UDP] Broadcasting message from {msg.SenderId} to all clients via UDP.");
-                    await HandleBroadcastMessage(senderClient, msg, isUdp: true);
+                    await BroadcastUdp(senderClient, msg);
                     
                 }
                 catch (OperationCanceledException)
