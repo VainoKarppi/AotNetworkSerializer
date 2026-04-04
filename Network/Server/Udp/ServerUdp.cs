@@ -88,14 +88,11 @@ public static partial class Server
 
                         // TODO recalculate crc32 if payload is modified (maskSender)
 
-                        Console.WriteLine($"[SERVER UDP] Forwarding message from {msg.SenderId} to {msg.TargetId} via UDP.");
-
                         await _udpListener.SendAsync(result.Buffer.AsMemory(), targetClient.UdpEndpoint, token);
                         continue;
                     }
 
                     // --- Broadcast to all clients ---
-                    Console.WriteLine($"[SERVER UDP] Broadcasting message from {msg.SenderId} to all clients via UDP.");
                     await BroadcastUdp(senderClient, msg);
                     
                 }
@@ -128,12 +125,11 @@ public static partial class Server
 
     private static async Task BroadcastUdp(Connection sender, NetworkMessage message)
     {
+        _cts ??= new CancellationTokenSource();
+
         foreach (var client in Clients.Values)
         {
-            if (!client.Connected || client.Id == sender.Id || client.UdpEndpoint == null)
-                continue;
-
-            Console.WriteLine($"[NETWORK] Broadcasting UDP message from {message.SenderId} to client {client.Id}");
+            if (!client.Connected || client.Id == sender.Id || client.UdpEndpoint == null) continue;
 
             NetworkMessage udpMsg = new()
             {
@@ -146,7 +142,7 @@ public static partial class Server
             var packet = MessageBuilder.CreateUdpMessage(udpMsg);
 
             // Fire-and-forget is fine for UDP
-            _ = _udpListener!.SendAsync(packet.AsMemory(), client.UdpEndpoint);
+            await _udpListener!.SendAsync(packet.AsMemory(), client.UdpEndpoint, _cts.Token);
         }
     }
 }

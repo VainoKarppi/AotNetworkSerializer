@@ -126,7 +126,7 @@ public static class MessageBuilder
         }
 
         if (DEBUG)
-            Console.WriteLine($"{(targetId == Server.SERVER_ID ? "[SERVER]" : "[CLIENT]")} (ReadMessage) SenderId:{senderId}, TargetId:{targetId}, MessageId:{messageId}: {payload}");
+            Console.WriteLine($"{(targetId == Server.SERVER_ID ? "[SERVER]" : "[CLIENT]")} (ReadMessage) MessageType:{messageType}, SenderId:{senderId}, TargetId:{targetId}, MessageId:{messageId}: {payload}");
 
         return new NetworkMessage
         {

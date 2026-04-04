@@ -7,19 +7,9 @@ namespace DynTypeNetwork;
 
 public static partial class Server
 {
-
-  
-
-
     private static TcpListener? _tcpListener;
     
-
-
-    public static bool IsTcpServerRunning() =>
-        _tcpListener != null && _tcpListener.Server.IsBound;
-
-    
-    
+    public static bool IsTcpServerRunning() => _tcpListener != null && _tcpListener.Server.IsBound;
 
     private static void StartTcp(int port)
     {
@@ -65,6 +55,9 @@ public static partial class Server
                     continue;
                 }
 
+                // If handshake is not done, we only accept Handshake messages. Any other message type will be ignored.
+                if (client.HandshakeDone == false) continue;
+
                 if (msg.MessageType == MessageType.Response) {
                     Responses[msg.MessageId] = msg;
                     continue;
@@ -76,8 +69,8 @@ public static partial class Server
                 }
 
                 if (msg.MessageType == MessageType.Custom) {
-
-                    _ = Task.Run(() => OnTcpMessageReceived?.Invoke(msg));
+                    
+                    if (msg.TargetId == SERVER_ID) _ = Task.Run(() => OnTcpMessageReceived?.Invoke(msg));
                     
                     if (msg.TargetId == SERVER_ID) {
                        await MessageBuilder.HandleCustomMessage(client.GetStream(), msg, token); 
@@ -93,8 +86,6 @@ public static partial class Server
         catch (Exception)
         {
         }
-
-        Clients.Remove(client.Id);
 
         await ClientDisconnected(client, clientDisconnectSuccess);
     }
@@ -121,12 +112,26 @@ public static partial class Server
     {
         var tasks = new List<Task<object?>>();
 
+        // TODO FIX: This still sends the message back to sender?
         foreach (var client in Clients.Values.Where(c => c.Connected && c.Id != sender.Id))
         {
             // If MessageId == 0, we treat it as a fire-and-forget broadcast, where we don't expect any response from the clients. We just send the message to all clients and return immediately.
             if (message.MessageId == 0) {
                 Console.WriteLine($"[NETWORK] Broadcasting TCP message from {message.SenderId} to client {client.Id}");
-                _ = SendMessageAsync(client, client.Id, message.MessageType, message.Payload);
+                //_ = SendMessageAsync(client, client.Id, message.MessageType, message.Payload);
+
+                var requestMessage = new NetworkMessage
+                {
+                    SenderId = sender.Id,
+                    TargetId = client.Id,
+                    MessageType = message.MessageType,
+                    MessageId = message.MessageId,
+                    Payload = message.Payload
+                };
+
+                var data = MessageBuilder.CreateTcpMessage(requestMessage);
+                await client.GetStream().WriteAsync(data);
+
                 continue;
             }
             

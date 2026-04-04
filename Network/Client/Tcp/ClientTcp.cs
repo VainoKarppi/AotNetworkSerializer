@@ -75,26 +75,25 @@ public static partial class Client
                 {
                     // Read ONE full message from stream using the proper helper
                     NetworkMessage? msg = MessageBuilder.ReadTcpMessage(stream);
-                    if (msg == null)
-                    {
+
+                    if (msg == null) {
                         // Connection lost or stream closed
+                        // TODO send client disconnect instead?
                         await HandleServerShutdown(false);
                         break;
                     }
-                    if (msg.MessageType == MessageType.Handshake)
-                    {
+
+                    if (msg.MessageType == MessageType.Handshake) {
                         Responses[msg.MessageId] = msg;
                         continue;
                     }
 
-                    if (msg.MessageType == MessageType.Response)
-                    {
+                    if (msg.MessageType == MessageType.Response) {
                         Responses[msg.MessageId] = msg;
                         continue;
                     }
 
-                    if (msg.MessageType == MessageType.ClientConnected)
-                    {
+                    if (msg.MessageType == MessageType.ClientConnected) {
                         if (msg.Payload == null) continue;
                         int? newClient = MessageBuilder.UnpackPayload<int>(msg.Payload);
                         if (newClient == null) continue;
@@ -103,7 +102,7 @@ public static partial class Client
 
                         _ = Task.Run(() => OnOtherClientConnected?.Invoke(newClient.Value));
                         
-                        break;
+                        continue;
                     }
 
                     if (msg.MessageType == MessageType.ClientDisconnected) {
@@ -119,8 +118,7 @@ public static partial class Client
                         continue;
                     }
 
-                    if (msg.MessageType == MessageType.ServerShutdown)
-                    {
+                    if (msg.MessageType == MessageType.ServerShutdown) {
                         await HandleServerShutdown(true);
                         break;
                     }
@@ -139,6 +137,7 @@ public static partial class Client
             catch (OperationCanceledException)
             {
                 // normal shutdown
+                Console.WriteLine("[CLIENT] TCP receive loop cancelled.");
             }
             catch (Exception ex) when (ex is ObjectDisposedException || ex is IOException)
             {

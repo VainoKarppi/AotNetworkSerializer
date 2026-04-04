@@ -87,12 +87,24 @@ class Program
             Client.OnTcpMessageReceived += OnTcpMessageReceived;
             Client.OnOtherClientDisconnected += OnOtherClientDisconnected;
             Client.OnServerShutdown += OnServerShutdown;
+
+            // TODO UDP events
+            /*
+            Client.OnUdpMessageSent += OnUdpMessageSent;
+            Client.OnUdpMessageReceived += OnUdpMessageReceived;
+            */
         }
 
         if (serverMode || dedicatedMode)
         {
             Server.OnTcpMessageReceived += OnTcpMessageReceivedServer;
             Server.OnTcpMessageSent += OnTcpMessageSentServer;
+
+            // TODO UDP events
+            /*
+            Server.OnUdpMessageSent += OnUdpMessageSentServer;
+            Server.OnUdpMessageReceived += OnUdpMessageReceivedServer;
+            */
             Server.OnServerShutdown += OnServerShutdownServer;
         }
 
@@ -196,7 +208,7 @@ class Program
             ? Client.SendTcpMessageAsync(targetId, methodName, argument)
             : Client.SendUdpMessageAsync(targetId, methodName, argument));
 
-        Console.WriteLine($"[CLIENT] Message sent to {targetId}");
+        Console.WriteLine($"[CLIENT] Message sent to {(targetId == 0 ? "ALL" : targetId.ToString())}");
     }
 
     private static async Task HandleClientRequest(string[] parts)
@@ -219,7 +231,7 @@ class Program
         try
         {
             var result = await Client.RequestDataAsync<string>(targetId, methodName, argument);
-            Console.WriteLine($"[CLIENT] Result from {targetId}.{methodName}: {result}");
+            Console.WriteLine($"[CLIENT] Result from {targetId} ({methodName}): {result}");
         }
         catch (Exception ex)
         {
@@ -302,17 +314,11 @@ class Program
         string methodName = parts[2];
         string argument = string.Join(' ', parts.Skip(3));
 
-        if (!Server.GetClients().Contains(targetId))
-        {
-            Console.WriteLine("[SERVER] Client not found");
-            return;
-        }
-
         await (isTcp
             ? Server.SendTcpMessageAsync(targetId, methodName, argument)
             : Server.SendUdpMessageAsync(targetId, methodName, argument));
         
-        Console.WriteLine($"[SERVER] Message sent to client {targetId}");
+        Console.WriteLine($"[SERVER] Message sent to client { (targetId == 0 ? "ALL" : targetId.ToString()) }");
     }
 
     private static async Task HandleServerRequest(string[] parts)

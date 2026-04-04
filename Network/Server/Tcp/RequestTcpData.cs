@@ -24,6 +24,18 @@ public static partial class Server {
     // ── STRING METHOD ──────────────────────────
     // TODO Validate for errors: Throw error, or just add event?
     public static Task<T?> RequestDataAsync<T>(int targetId, string methodName, params object?[] args) {
+        if (!IsTcpServerRunning()) throw new InvalidOperationException("TCP not initialized.");
+        if (targetId == SERVER_ID) throw new InvalidOperationException("Server cannot send request to itself.");
+
+        // Make sure client method exists before sending request
+        var methods = MethodBuilder.GetAvailableClientMethods();
+
+        var method = methods.FirstOrDefault(m =>
+            m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
+
+        if (method == null)
+            throw new InvalidOperationException($"Method '{methodName}' not registered in client methods.");
+
         return RequestDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, new MethodRequest { MethodName = methodName, Args = args });
     }
         
@@ -37,19 +49,11 @@ public static partial class Server {
 
         Clients.TryGetValue(targetId, out Connection? client);
         if (client == null) throw new Exception($"Client not found with this id: {targetId}");
-        
-        if (type == MessageType.Custom) {
-            // TODO if the target method returns void --> set MessageId = 0 
-            // TODO read from:
 
-            if (msg.SenderId != SERVER_ID) {
-                // private static Dictionary<string, RpcMethodInfo> _clientMethodInfos = [];
-                // private static readonly Dictionary<string, Delegate> _clientDelegates = new(StringComparer.OrdinalIgnoreCase);
-            } else {
-                // private static readonly Dictionary<string, Delegate> _serverDelegates = new(StringComparer.OrdinalIgnoreCase);
-                // private static Dictionary<string, RpcMethodInfo> _serverMethodInfos = [];
-            }
-        }
+        if (!client.Connected) throw new Exception($"Client with id {targetId} is not connected.");
+        if (client.GetStream() == null) throw new Exception($"Network stream for client {targetId} is not available.");
+        if (!client.GetStream().CanWrite) throw new Exception($"Cannot write to network stream for client {targetId}.");
+
         Requests.Add(requestId);
 
         var packet = MessageBuilder.CreatePacket(msg, payload);

@@ -28,9 +28,6 @@ public static partial class Server
     private static CancellationTokenSource? _cts;
 
 
-
-    
-    
     public static bool IsRunning() => IsTcpServerRunning() || IsUdpServerRunning();
 
     // ── Start TCP server ──────────────────────
@@ -67,8 +64,10 @@ public static partial class Server
     }
 
     private static async Task ClientDisconnected(Connection client, bool success) {
-        Console.WriteLine($"[SERVER] Client {client.Id} disconnected. Success: {success}");
         Clients.Remove(client.Id);
+        if (!client.HandshakeDone) return;
+
+        Console.WriteLine($"[SERVER] Client {client.Id} disconnected. Success: {success}");
 
         foreach (var otherClient in Clients.Values) {
             await SendMessageAsync(otherClient, otherClient.Id, MessageType.ClientDisconnected, new object[] { client.Id, success });
@@ -80,7 +79,6 @@ public static partial class Server
 
     private static async Task HandleClientHandshake(Connection client, NetworkMessage message)
     {
-        
         HandshakeMessage? payload = MessageBuilder.UnpackPayload<HandshakeMessage>(message.Payload);
         if (payload == null) {
             Console.WriteLine($"[SERVER] Invalid handshake from client {client.Id}");
@@ -103,12 +101,14 @@ public static partial class Server
             AvailableMethods = MethodBuilder.GetAvailableServerMethods()
         };
 
+        Clients.Add(client.Id, client);
+        client.HandshakeDone = true;
+
         // Notify other clients that client was connected
         foreach (var otherClient in Clients.Values) {
+            if (!otherClient.Connected || otherClient.Id == client.Id || !otherClient.HandshakeDone) continue;
             await SendMessageAsync(otherClient, otherClient.Id, MessageType.ClientConnected, client.Id);
         }
-
-        Clients.Add(client.Id, client);
 
         Console.WriteLine($"[SERVER] Client connected: {client.Id}");
 
@@ -119,8 +119,8 @@ public static partial class Server
             MessageId = message.MessageId,
             MessageType = MessageType.Handshake
         };
-        var packet2 = MessageBuilder.CreatePacket(response, handshake);
+        var handshakeResult = MessageBuilder.CreatePacket(response, handshake);
 
-        await client.GetStream().WriteAsync(packet2);
+        await client.GetStream().WriteAsync(handshakeResult);
     }
 }
