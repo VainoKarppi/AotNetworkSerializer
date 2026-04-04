@@ -56,6 +56,8 @@ public static partial class Server {
 
         Requests.Add(requestId);
 
+        if (msg.MessageType == MessageType.Custom) _ = Task.Run(() => OnTcpMessageSent?.Invoke(msg));
+
         var packet = MessageBuilder.CreatePacket(msg, payload);
         await client.GetStream().WriteAsync(packet);
         

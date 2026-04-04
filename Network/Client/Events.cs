@@ -31,7 +31,7 @@ public static partial class Client
     public static event Action<HandshakeFailureReason, string>? OnHandshakeFailed;
 
     public static event Action<int>? OnClientConnected;
-    public static event Action<NetworkMessage>? OnClientDisconnected;
+    public static event Action<bool>? OnClientDisconnected;
 
     public static event Action<int>? OnOtherClientConnected;
     public static event Action<int, bool>? OnOtherClientDisconnected;

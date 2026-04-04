@@ -44,6 +44,8 @@ public static partial class Server
                     Payload = Serializer.Serialize(payload)
                 };
 
+                OnUdpMessageSent?.Invoke(msg);
+
                 var packet = MessageBuilder.CreateUdpMessage(msg);
 
                 await _udpListener!.SendAsync(packet, packet.Length, client.UdpEndpoint);

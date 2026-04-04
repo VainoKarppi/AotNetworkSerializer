@@ -67,6 +67,8 @@ public static partial class Server
         Clients.Remove(client.Id);
         if (!client.HandshakeDone) return;
 
+        OnClientDisconnected?.Invoke(client.Id, success);
+
         Console.WriteLine($"[SERVER] Client {client.Id} disconnected. Success: {success}");
 
         foreach (var otherClient in Clients.Values) {
@@ -103,6 +105,8 @@ public static partial class Server
 
         Clients.Add(client.Id, client);
         client.HandshakeDone = true;
+
+        OnClientConnected?.Invoke(client.Id);
 
         // Notify other clients that client was connected
         foreach (var otherClient in Clients.Values) {

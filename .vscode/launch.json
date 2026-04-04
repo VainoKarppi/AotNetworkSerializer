@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "C#: AotSerializer Debug",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "dotnet",
+            "args": ["run", "dedicated"],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

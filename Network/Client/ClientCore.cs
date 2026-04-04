@@ -52,6 +52,8 @@ public static partial class Client
 
             _cts?.Cancel();
 
+            OnClientDisconnected?.Invoke(true);
+
             ClientID = 0;
 
             Clients.Clear();

@@ -50,42 +50,37 @@ public static partial class Server
                 NetworkMessage? msg = MessageBuilder.ReadTcpMessage(client.GetStream());
                 if (msg == null) break;
 
-                if (msg.MessageType == MessageType.Handshake) {
-                    await HandleClientHandshake(client, msg);
-                    continue;
+                switch (msg.MessageType)
+                {
+                    case MessageType.Handshake:
+                        await HandleClientHandshake(client, msg);
+                        continue;
+
+                    case MessageType.Response:
+                        Responses[msg.MessageId] = msg;
+                        continue;
+
+                    case MessageType.ClientDisconnected:
+                        clientDisconnectSuccess = true;
+                        continue;
+
+                    case MessageType.Custom:
+                        if (msg.TargetId == SERVER_ID) _ = Task.Run(() => OnTcpMessageReceived?.Invoke(msg));
+                        if (msg.TargetId == SERVER_ID) {
+                            await MessageBuilder.HandleCustomMessage(client.GetStream(), msg, token);
+                        } else {
+                            _ = msg.TargetId == 0 ? BroadcastTcp(client, msg) : ForwardTcpMessageToTarget(client, msg);
+                        }
+                        continue;
+
+                    default:
+                        Console.WriteLine($"[SERVER] Unknown message type from client {client.Id}: {msg.MessageType}");
+                        continue;
                 }
 
-                // If handshake is not done, we only accept Handshake messages. Any other message type will be ignored.
-                if (client.HandshakeDone == false) continue;
 
-                if (msg.MessageType == MessageType.Response) {
-                    Responses[msg.MessageId] = msg;
-                    continue;
-                }
-
-                if (msg.MessageType == MessageType.ClientDisconnected) {
-                    clientDisconnectSuccess = true;
-                    continue;
-                }
-
-                if (msg.MessageType == MessageType.Custom) {
-                    
-                    if (msg.TargetId == SERVER_ID) _ = Task.Run(() => OnTcpMessageReceived?.Invoke(msg));
-                    
-                    if (msg.TargetId == SERVER_ID) {
-                       await MessageBuilder.HandleCustomMessage(client.GetStream(), msg, token); 
-                    } else {
-                        // Handle broadcast message
-                        _ = msg.TargetId == 0 ? BroadcastTcp(client, msg) : ForwardTcpMessageToTarget(client, msg);
-                    }
-                    
-                    continue;
-                }
             }
-        }
-        catch (Exception)
-        {
-        }
+        } catch (Exception) {}
 
         await ClientDisconnected(client, clientDisconnectSuccess);
     }
@@ -117,21 +112,19 @@ public static partial class Server
         {
             // If MessageId == 0, we treat it as a fire-and-forget broadcast, where we don't expect any response from the clients. We just send the message to all clients and return immediately.
             if (message.MessageId == 0) {
-                Console.WriteLine($"[NETWORK] Broadcasting TCP message from {message.SenderId} to client {client.Id}");
-                //_ = SendMessageAsync(client, client.Id, message.MessageType, message.Payload);
+                _ = Task.Run(async () => {
+                    var requestMessage = new NetworkMessage {
+                        SenderId = sender.Id,
+                        TargetId = client.Id,
+                        MessageType = message.MessageType,
+                        MessageId = message.MessageId,
+                        Payload = message.Payload
+                    };
 
-                var requestMessage = new NetworkMessage
-                {
-                    SenderId = sender.Id,
-                    TargetId = client.Id,
-                    MessageType = message.MessageType,
-                    MessageId = message.MessageId,
-                    Payload = message.Payload
-                };
-
-                var data = MessageBuilder.CreateTcpMessage(requestMessage);
-                await client.GetStream().WriteAsync(data);
-
+                    var data = MessageBuilder.CreateTcpMessage(requestMessage);
+                    await client.GetStream().WriteAsync(data);
+                });
+            
                 continue;
             }
             
@@ -157,6 +150,8 @@ public static partial class Server
                 await client.GetStream().WriteAsync(data);
 
                 NetworkMessage? returnMessage = await WaitWithTimeout(requestId);
+
+                Console.WriteLine($"[NETWORK] Received response for broadcast message {message.MessageId} from client {client.Id}");
                 if (returnMessage == null || returnMessage.Payload == null) return null;
 
                 return MessageBuilder.UnpackPayload<object>(returnMessage.Payload);

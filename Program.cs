@@ -368,6 +368,7 @@ class Program
             string returnType = method.ReturnType?.Name ?? "void";
             Console.WriteLine($"{method.Name}({parameters}) : {returnType}");
         }
+        Console.WriteLine("=====================\n");
     }
     #endregion
 
