@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Net;
 using System.Net.Sockets;
@@ -30,11 +32,9 @@ public static partial class Server {
         // Make sure client method exists before sending request
         var methods = MethodBuilder.GetAvailableClientMethods();
 
-        var method = methods.FirstOrDefault(m =>
-            m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
+        var method = methods.FirstOrDefault(m => m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
 
-        if (method == null)
-            throw new InvalidOperationException($"Method '{methodName}' not registered in client methods.");
+        if (method == null) throw new InvalidOperationException($"Method '{methodName}' not registered in client methods.");
 
         return RequestDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, new MethodRequest { MethodName = methodName, Args = args });
     }
@@ -56,7 +56,7 @@ public static partial class Server {
 
         Requests.Add(requestId);
 
-        if (msg.MessageType == MessageType.Custom) _ = Task.Run(() => OnTcpMessageSent?.Invoke(msg));
+        if (msg.MessageType == MessageType.Custom && msg.SenderId == SERVER_ID) _ = Task.Run(() => OnTcpMessageSent?.Invoke(msg));
 
         var packet = MessageBuilder.CreatePacket(msg, payload);
         await client.GetStream().WriteAsync(packet);

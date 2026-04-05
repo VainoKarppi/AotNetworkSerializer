@@ -1,10 +1,13 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Threading.Tasks;
 using DynTypeNetwork;
 using DynTypeSerializer;
 using static DynTypeNetwork.MethodBuilder;
@@ -133,7 +136,7 @@ class Program
         while (true)
         {
             try {
-                Console.Write("\n[CLIENT] Enter command (send/request/methods/clients/self/udpstatus/sendudp/exit): ");
+                Console.Write("\n[CLIENT] Enter command (send/request/methods/clients/self/udpstatus/sendudp/exit):\n> ");
                 string? input = Console.ReadLine();
                 if (string.IsNullOrWhiteSpace(input)) continue;
 
