@@ -42,10 +42,10 @@ public static partial class Client
         _ = Task.Run(() => OnServerShutdown?.Invoke(intentional));
 
         // Clean up connections
-        await Disconnect();
+        await DisconnectAsync();
     }
 
-    public static async Task Disconnect()
+    public static async Task DisconnectAsync()
     {
         try
         {

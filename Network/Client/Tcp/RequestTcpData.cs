@@ -90,8 +90,7 @@ public static partial class Client {
             return default;
 
         NetworkMessage? returnMessage = await WaitWithTimeout(requestId, TIMEOUT_MS);
-        if (returnMessage?.Payload == null)
-            return default;
+        if (returnMessage?.Payload == null) throw new Exception($"No response received data for request {requestId}");
 
         return MessageBuilder.UnpackPayload<TResult>(returnMessage.Payload);
     }

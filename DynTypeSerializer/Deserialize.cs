@@ -31,9 +31,10 @@ public static partial class Serializer
         }
 
         object? result = ReadNode(root, typeof(T));
+        if (result == null) throw new InvalidOperationException("Deserialization resulted in null.");
         return result is null ? default : (T)result;
     }
-    
+     
     /// <summary>Deserialize when the root type is unknown (returns object / boxed value).</summary>
     public static object? DeserializeDynamic(string json)
     {
@@ -164,18 +165,22 @@ public static partial class Serializer
  
         foreach (var prop in GetProperties(targetType))
         {
-            if (el.TryGetProperty(prop.Name, out var val) && prop.CanWrite)
+            if (!prop.CanWrite) continue;
+            if (!el.TryGetProperty(prop.Name, out var val)) continue;
+
+            object? propValue;
+
+            if (prop.PropertyType == typeof(Type))
             {
-                if (prop.PropertyType == typeof(Type))
-                {
-                    string typeName = val.GetString() ?? throw new InvalidOperationException("Type property is null");
-                    prop.SetValue(instance, Type.GetType(typeName) ?? throw new InvalidOperationException($"Cannot resolve type {typeName}"));
-                }
-                else
-                {
-                    prop.SetValue(instance, ReadNode(val, prop.PropertyType));
-                }
+                string? typeName = val.GetString();
+                propValue = string.IsNullOrEmpty(typeName) ? null : Type.GetType(typeName);
             }
+            else
+            {
+                propValue = ReadNode(val, prop.PropertyType);
+            }
+
+            prop.SetValue(instance, propValue);
         }
         return instance;
     }

@@ -97,15 +97,19 @@ public static class MethodBuilder {
         foreach (var method in methods) {
             if (method.IsSpecialName) continue;
 
-            var del = Delegate.CreateDelegate(
-                Expression.GetDelegateType(
-                    method.GetParameters()
-                            .Select(p => p.ParameterType)
-                            .Concat(method.ReturnType == typeof(void) ? Array.Empty<Type>() : [method.ReturnType])
-                            .ToArray()
-                ),
-                method
-            );
+            Delegate del;
+            try {
+                // Try creating a strongly-typed delegate
+                var paramTypes = method.GetParameters().Select(p => p.ParameterType).ToArray();
+                Type delegateType = method.ReturnType == typeof(void)
+                    ? Expression.GetActionType(paramTypes)
+                    : Expression.GetFuncType(paramTypes.Concat(new[] { method.ReturnType }).ToArray());
+
+                del = Delegate.CreateDelegate(delegateType, method);
+            } catch (ArgumentException) {
+                // Fallback: use DynamicInvoke wrapper
+                del = new Func<object?[], object?>(args => method.Invoke(null, args));
+            }
 
             var rpcInfo = new RpcMethodInfo {
                 Name = method.Name,

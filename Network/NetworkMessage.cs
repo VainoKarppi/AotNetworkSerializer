@@ -73,7 +73,7 @@ internal class HandshakeMessage
 
 public static class MessageBuilder
 {
-    public static bool DEBUG { get; set; } = true;
+    public static bool DEBUG { get; set; } = false;
 
     
 

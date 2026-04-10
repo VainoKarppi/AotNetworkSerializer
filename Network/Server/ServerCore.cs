@@ -14,14 +14,14 @@ public static partial class Server
     public const int SERVER_ID = 1;
     private static int _clientIdCounter = 1;
 
-    private class Connection : TcpClient
+    public class Connection : TcpClient
     {
         internal int Id { get; set; } = Interlocked.Increment(ref _clientIdCounter);
         internal bool HandshakeDone { get; set; } = false;
         internal IPEndPoint? UdpEndpoint { get; set; }
     }
 
-    private readonly static Dictionary<int, Connection> Clients = [];
+    public readonly static Dictionary<int, Connection> Clients = [];
 
     public static List<int> GetClients() {
         if (!IsTcpServerRunning()) throw new Exception("Server is not running");
@@ -35,7 +35,7 @@ public static partial class Server
     public static bool IsRunning() => IsTcpServerRunning() || IsUdpServerRunning();
 
     // ── Start TCP server ──────────────────────
-    public static void Start(int port, bool startUdp = false)
+    public static async Task StartAsync(int port, bool startUdp = false)
     {
         StartTcp(port);
         if (startUdp) StartUdp(port);
@@ -85,7 +85,9 @@ public static partial class Server
 
     private static async Task HandleClientHandshake(Connection client, NetworkMessage message)
     {
+        try {
         HandshakeMessage? payload = MessageBuilder.UnpackPayload<HandshakeMessage>(message.Payload);
+
         if (payload == null) {
             Console.WriteLine($"[SERVER] Invalid handshake from client {client.Id}");
             client.Close();
@@ -118,7 +120,6 @@ public static partial class Server
             await SendMessageAsync(otherClient, otherClient.Id, MessageType.ClientConnected, client.Id);
         }
 
-        Console.WriteLine($"[SERVER] Client connected: {client.Id}");
 
         NetworkMessage response = new()
         {
@@ -130,5 +131,17 @@ public static partial class Server
         var handshakeResult = MessageBuilder.CreatePacket(response, handshake);
 
         await client.GetStream().WriteAsync(handshakeResult);
+        } catch (Exception ex)
+        {
+            Clients.Remove(client.Id);
+
+            if (client.HandshakeDone) {
+                OnClientDisconnected?.Invoke(client.Id, false);
+            }
+            Console.WriteLine($"[SERVER] Handshake failed for client {client.Id}: {ex.Message}");
+
+            Console.WriteLine(ex);
+            client.Close();
+        }
     }
 }

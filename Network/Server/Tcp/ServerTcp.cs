@@ -21,6 +21,7 @@ public static partial class Server
         _tcpListener.Start();
         _cts = new CancellationTokenSource();
         _ = AcceptTcpClientsAsync(_cts.Token);
+        Console.WriteLine("[SERVER] TCP Server started");
     }
 
     private static async Task AcceptTcpClientsAsync(CancellationToken token)
