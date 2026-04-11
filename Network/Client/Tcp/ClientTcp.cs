@@ -5,6 +5,7 @@ using System.Linq.Expressions;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using DynTypeSerializer;
@@ -35,14 +36,16 @@ public static partial class Client
 
         KeyExchange.InitializeClientKeyExchange();
 
-        string assemblyHash = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "";
+        //string assemblyHash = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "";
+
+        string buildId = Assembly.GetExecutingAssembly().ManifestModule.ModuleVersionId.ToString();
 
         // Combine with customHash if provided
         var availableMethods = MethodBuilder.GetAvailableClientMethods();
         string methodsHash = MethodBuilder.ComputeMethodsHash(availableMethods);
 
         HandshakeMessage handshake = new() {
-            Hash = $"{assemblyHash}-{methodsHash}-{customHash ?? ""}",
+            Hash = $"{buildId}|{customHash ?? ""}|{methodsHash}",
             AvailableMethods = availableMethods,
             ClientPublicKey = Convert.ToBase64String(KeyExchange.ClientPublicKey!)
         };

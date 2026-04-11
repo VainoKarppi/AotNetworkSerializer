@@ -24,7 +24,7 @@ public static partial class Client
 
     public static async Task<int> ConnectAsync(string host, int port, bool startUdp = false, string? customHash = null)
     {
-        int userId = await ConnectTcp(host, port, null);
+        int userId = await ConnectTcp(host, port, customHash);
         if (startUdp) await ConnectUdp(host, port);
 
         return userId;

@@ -114,7 +114,7 @@ class Program
         // ── START SERVER IF APPLICABLE ──────────
         if (serverMode || dedicatedMode)
         {
-            await Server.StartAsync(5000, startUdp: true);
+            await Server.StartAsync(5000, startUdp: true, customHash: "customhash123");
             Console.WriteLine("[SERVER] TCP Server started");
         }
 
@@ -130,8 +130,14 @@ class Program
     #region Client Mode
     private static async Task RunClientMode()
     {
-        int clientId = await Client.ConnectAsync("127.0.0.1", 5000, startUdp: true);
-        Console.WriteLine($"[CLIENT] Connected with ID: {clientId}");
+        try
+        {
+            int clientId = await Client.ConnectAsync("127.0.0.1", 5000, startUdp: true, customHash: "customhash123");
+            Console.WriteLine($"[CLIENT] Connected with ID: {clientId}");
+        } catch (Exception ex) {
+            Console.WriteLine($"[CLIENT] Connection error: {ex.Message}");
+            return;
+        }
 
         while (true)
         {
