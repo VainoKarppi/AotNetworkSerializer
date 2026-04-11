@@ -68,6 +68,7 @@ public static partial class Server
     }
 
     private static async Task ClientDisconnected(Connection client, bool success) {
+        KeyExchange.RemoveServerKeyExchange(client.Id);
         Clients.Remove(client.Id);
         if (!client.HandshakeDone) return;
 
@@ -94,6 +95,14 @@ public static partial class Server
             return;
         }
 
+        if (string.IsNullOrEmpty(payload.ClientPublicKey)) {
+            Console.WriteLine($"[SERVER] Missing client public key for handshake from {client.Id}");
+            client.Close();
+            return;
+        }
+
+        KeyExchange.InitializeServerKeyExchange(client.Id, payload.ClientPublicKey);
+
         // TODO validate hash etc
 
         // Register client methods from handshake, if not already registered (eg. from previous client handshakes)
@@ -106,7 +115,8 @@ public static partial class Server
             Message = "SUCCESS",
             ClientId = client.Id,
             OtherConnectedClients = Clients.Keys.Where(id => id != client.Id).ToList(),
-            AvailableMethods = MethodBuilder.GetAvailableServerMethods()
+            AvailableMethods = MethodBuilder.GetAvailableServerMethods(),
+            ServerPublicKey = KeyExchange.GetServerPublicKey(client.Id)
         };
 
         Clients.Add(client.Id, client);
@@ -133,6 +143,7 @@ public static partial class Server
         await client.GetStream().WriteAsync(handshakeResult);
         } catch (Exception ex)
         {
+            KeyExchange.RemoveServerKeyExchange(client.Id);
             Clients.Remove(client.Id);
 
             if (client.HandshakeDone) {

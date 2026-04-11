@@ -38,10 +38,17 @@ public static partial class Server {
 
         return RequestDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, new MethodRequest { MethodName = methodName, Args = args });
     }
+
+    public static Task<T?> ForwardRequestDataAsync<T>(int targetId, string methodName, params object?[] args) {
+        if (!IsTcpServerRunning()) throw new InvalidOperationException("TCP not initialized.");
+        if (targetId == SERVER_ID) throw new InvalidOperationException("Server cannot send request to itself.");
+
+        return RequestDataInternalAsync<MethodRequest, T>(targetId, MessageType.Custom, new MethodRequest { MethodName = methodName, Args = args }, true);
+    }
         
 
     // ── INTERNAL GENERIC ───────────────────────
-    private static async Task<TResult?> RequestDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload)
+    private static async Task<TResult?> RequestDataInternalAsync<TPayload, TResult>(int targetId, MessageType type, TPayload payload, bool isForwarded = false)
     {
 
         ushort requestId = MessageBuilder.GenerateRequestId(ref _requestId);
@@ -56,7 +63,7 @@ public static partial class Server {
 
         Requests.Add(requestId);
 
-        if (msg.MessageType == MessageType.Custom && msg.SenderId == SERVER_ID) _ = Task.Run(() => OnTcpMessageSent?.Invoke(msg));
+        if (msg.MessageType == MessageType.Custom && msg.SenderId == SERVER_ID && !isForwarded) _ = Task.Run(() => OnTcpMessageSent?.Invoke(msg));
 
         var packet = MessageBuilder.CreatePacket(msg, payload);
         await client.GetStream().WriteAsync(packet);

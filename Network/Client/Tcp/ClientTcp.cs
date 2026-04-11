@@ -33,6 +33,8 @@ public static partial class Client
         _tcpStream = _tcpClient.GetStream();
         StartTcpReceiveLoop(_tcpStream);
 
+        KeyExchange.InitializeClientKeyExchange();
+
         string assemblyHash = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "";
 
         // Combine with customHash if provided
@@ -41,14 +43,18 @@ public static partial class Client
 
         HandshakeMessage handshake = new() {
             Hash = $"{assemblyHash}-{methodsHash}-{customHash ?? ""}",
-            AvailableMethods = availableMethods
+            AvailableMethods = availableMethods,
+            ClientPublicKey = Convert.ToBase64String(KeyExchange.ClientPublicKey!)
         };
         
         HandshakeMessage? response = await RequestDataInternalAsync(Server.SERVER_ID, MessageType.Handshake, handshake);
         if (response == null) throw new Exception("Handshake failed (Connection lost)");
 
         if (!response.Success) throw new Exception(response.Message ?? "Handshake failed (Unknown reason)");
-        
+        if (string.IsNullOrEmpty(response.ServerPublicKey)) throw new Exception("Handshake failed (Missing server public key)");
+
+        KeyExchange.ComputeClientSharedSecret(response.ServerPublicKey);
+
         ClientID = response.ClientId;
         Clients.AddRange(response.OtherConnectedClients);
 

@@ -52,9 +52,8 @@ public static partial class Server
         {
             while (!token.IsCancellationRequested && client.Connected)
             {
-                NetworkMessage? msg = MessageBuilder.ReadTcpMessage(client.GetStream());
-                if (msg == null) break;
-
+                    NetworkMessage? msg = MessageBuilder.ReadTcpMessage(client.GetStream(), client.Id);
+                    if (msg is null) break;
                 switch (msg.MessageType)
                 {
                     case MessageType.Handshake:
@@ -112,7 +111,6 @@ public static partial class Server
     {
         var tasks = new List<Task<object?>>();
 
-        // TODO FIX: This still sends the message back to sender?
         foreach (var client in Clients.Values.Where(c => c.Connected && c.Id != sender.Id))
         {
             // If MessageId == 0, we treat it as a fire-and-forget broadcast, where we don't expect any response from the clients. We just send the message to all clients and return immediately.
@@ -216,7 +214,7 @@ public static partial class Server
             return;
         }
 
-        object? result = await RequestDataAsync<object>(target.Id, request.MethodName!, request.Args);
+        object? result = await ForwardRequestDataAsync<object>(target.Id, request.MethodName!, request.Args);
 
         bool maskSender = false; // TODO set as a setting
         NetworkMessage response = new()

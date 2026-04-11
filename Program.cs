@@ -114,7 +114,7 @@ class Program
         // ── START SERVER IF APPLICABLE ──────────
         if (serverMode || dedicatedMode)
         {
-            Server.Start(5000, startUdp: true);
+            await Server.StartAsync(5000, startUdp: true);
             Console.WriteLine("[SERVER] TCP Server started");
         }
 
@@ -146,7 +146,7 @@ class Program
                 switch (command)
                 {
                     case "exit":
-                        await Client.Disconnect();
+                        await Client.DisconnectAsync();
                         return;
 
                     case "methods":

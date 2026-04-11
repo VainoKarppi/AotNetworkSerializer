@@ -69,6 +69,8 @@ internal class HandshakeMessage
     public int ClientId { get; set; }
     public List<int> OtherConnectedClients { get; set; } = [];
     public MethodBuilder.RpcMethodInfo[] AvailableMethods { get; set; } = [];
+    public string? ClientPublicKey { get; set; }
+    public string? ServerPublicKey { get; set; }
 }
 
 public static class MessageBuilder
@@ -102,18 +104,24 @@ public static class MessageBuilder
         // --- PAYLOAD ---
         if (payloadLength > 0) buffer.AddRange(payloadBytes);
 
-        // --- PREFIX TOTAL LENGTH ---
         byte[] messageBytes = buffer.ToArray();
+        byte[] envelope = MessageCrypto.CreateTcpEnvelope(messageBytes, msg.MessageType, msg.SenderId, msg.TargetId);
 
-        byte[] lengthPrefix = BitConverter.GetBytes(messageBytes.Length);
-        return [.. lengthPrefix, .. messageBytes];
+        byte[] lengthPrefix = BitConverter.GetBytes(envelope.Length);
+        return [.. lengthPrefix, ..envelope];
     }
 
-    private static NetworkMessage ReadTcpMessage(byte[] data, bool includeData = false)
+    private static NetworkMessage ReadTcpMessage(byte[] data, bool includeData = false, int? connectionId = null)
+    {
+        byte[] messageBytes = MessageCrypto.DecodeTcpEnvelope(data, connectionId);
+        return ParseTcpMessage(messageBytes, includeData);
+    }
+
+    private static NetworkMessage ParseTcpMessage(byte[] data, bool includeData = false)
     {
         if (data.Length < 4 + 4 + 2 + 2 + 8 + 4)
             throw new ArgumentException("Packet too short.", nameof(data));
-        
+
         int offset = 0;
 
         int senderId = BitConverter.ToInt32(data, offset); offset += 4;
@@ -143,7 +151,7 @@ public static class MessageBuilder
             Payload = payload
         };
     }
-    internal static NetworkMessage? ReadTcpMessage(NetworkStream stream) {
+    internal static NetworkMessage? ReadTcpMessage(NetworkStream stream, int? connectionId = null) {
         // --- READ LENGTH PREFIX (4 bytes) ---
         byte[] lenBuf = new byte[4];
         stream.ReadExactly(lenBuf);
@@ -158,7 +166,7 @@ public static class MessageBuilder
         stream.ReadExactly(messageBytes);
 
         // --- DESERIALIZE ---
-        NetworkMessage msg = ReadTcpMessage(messageBytes, includeData: true);
+        NetworkMessage msg = ReadTcpMessage(messageBytes, includeData: true, connectionId);
 
         return msg;
     }
@@ -202,38 +210,40 @@ public static class MessageBuilder
         uint checksum = CalculateChecksum(messageBytes, 4, offset - 4); // skip first 4 bytes
         Buffer.BlockCopy(BitConverter.GetBytes(checksum), 0, messageBytes, 0, 4);
 
-        return messageBytes;
+        return MessageCrypto.CreateUdpEnvelope(messageBytes, msg.MessageType, msg.SenderId, msg.TargetId);
     }
 
-    internal static NetworkMessage ReadUdpMessage(byte[] data, bool includeData = false)
+    internal static NetworkMessage ReadUdpMessage(byte[] data, bool includeData = false, int? senderId = null)
     {
-        if (data.Length < 4 + 24)
-            throw new ArgumentException("Packet too short.", nameof(data));
+        byte[] packet = MessageCrypto.DecodeUdpEnvelope(data, senderId);
+
+        if (packet.Length < 4 + 24)
+            throw new ArgumentException("Packet too short.", nameof(packet));
 
         int offset = 0;
 
-        uint receivedChecksum = BitConverter.ToUInt32(data, offset); offset += 4;
-        uint calculatedChecksum = CalculateChecksum(data, 4, data.Length - 4);
+        uint receivedChecksum = BitConverter.ToUInt32(packet, offset); offset += 4;
+        uint calculatedChecksum = CalculateChecksum(packet, 4, packet.Length - 4);
         if (receivedChecksum != calculatedChecksum)
             throw new InvalidOperationException("Checksum mismatch.");
 
-        int senderId = BitConverter.ToInt32(data, offset); offset += 4;
-        int targetId = BitConverter.ToInt32(data, offset); offset += 4;
-        MessageType messageType = (MessageType)BitConverter.ToInt16(data, offset); offset += 2;
-        ushort messageId = BitConverter.ToUInt16(data, offset); offset += 2;
-        long timestamp = BitConverter.ToInt64(data, offset); offset += 8;
-        int payloadLength = BitConverter.ToInt32(data, offset); offset += 4;
+        int sender = BitConverter.ToInt32(packet, offset); offset += 4;
+        int targetId = BitConverter.ToInt32(packet, offset); offset += 4;
+        MessageType messageType = (MessageType)BitConverter.ToInt16(packet, offset); offset += 2;
+        ushort messageId = BitConverter.ToUInt16(packet, offset); offset += 2;
+        long timestamp = BitConverter.ToInt64(packet, offset); offset += 8;
+        int payloadLength = BitConverter.ToInt32(packet, offset); offset += 4;
 
         string? payload = null;
         if (includeData && payloadLength > 0)
-            payload = Encoding.UTF8.GetString(data, offset, payloadLength);
+            payload = Encoding.UTF8.GetString(packet, offset, payloadLength);
 
         if (DEBUG)
-            Console.WriteLine($"{(targetId == Server.SERVER_ID ? "[SERVER]" : "[CLIENT]")} (ReadMessage) SenderId:{senderId}, TargetId:{targetId}, MessageId:{messageId}: {payload}");
+            Console.WriteLine($"{(targetId == Server.SERVER_ID ? "[SERVER]" : "[CLIENT]")} (ReadMessage) SenderId:{sender}, TargetId:{targetId}, MessageId:{messageId}: {payload}");
 
         return new NetworkMessage
         {
-            SenderId = senderId,
+            SenderId = sender,
             TargetId = targetId,
             MessageType = messageType,
             MessageId = messageId,

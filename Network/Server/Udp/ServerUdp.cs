@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -41,7 +42,8 @@ public static partial class Server
                     // --- Receive ---
                     var result = await _udpListener.ReceiveAsync(token);
 
-                    NetworkMessage msg = MessageBuilder.ReadUdpMessage(result.Buffer, includeData: true);
+                    int? senderId = Clients.Values.FirstOrDefault(c => c.UdpEndpoint != null && c.UdpEndpoint.Equals(result.RemoteEndPoint))?.Id;
+                    NetworkMessage msg = MessageBuilder.ReadUdpMessage(result.Buffer, includeData: true, senderId: senderId);
 
                     // --- Resolve sender ---
                     if (!Clients.TryGetValue(msg.SenderId, out var senderClient)) continue;
