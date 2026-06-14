@@ -130,6 +130,7 @@ public static partial class Server
             if (buildId != clientBuild) throw new Exception($"Client build ID mismatch. Server: {buildId}, Client: {clientBuild}");
 
             // Register client methods from handshake, if not already registered (eg. from previous client handshakes)
+            // TODO maybe actually already register the clientMethods on server start?
             if (MethodBuilder.GetAvailableClientMethods().Length == 0) {
                 MethodBuilder.RegisterFromHandshake(payload.AvailableMethods, isServer: true);
             } else {
